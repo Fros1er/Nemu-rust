@@ -15,15 +15,6 @@ pub(crate) struct RISCV64 {
     instruction_patterns: Vec<Pattern>,
 }
 
-impl RISCV64 {
-    pub(crate) fn new() -> RISCV64 {
-        RISCV64 {
-            state: RISCV64CpuState::new(),
-            instruction_patterns: init_patterns(),
-        }
-    }
-}
-
 impl RISCV64CpuState {
     fn new() -> RISCV64CpuState {
         RISCV64CpuState {
@@ -49,6 +40,12 @@ const IMG: [u32; 5] = [
 ];
 
 impl Isa<RISCV64CpuState> for RISCV64 {
+    fn new() -> RISCV64 {
+        RISCV64 {
+            state: RISCV64CpuState::new(),
+            instruction_patterns: init_patterns(),
+        }
+    }
     fn isa_logo() -> &'static [u8] {
         RISCV_LOGO
     }
@@ -81,7 +78,7 @@ impl Isa<RISCV64CpuState> for RISCV64 {
         for pat in self.instruction_patterns.iter() {
             if pat.match_inst(&inst) {
                 pat.exec(&inst, &mut self.state);
-                return
+                return;
             }
         }
         // no match

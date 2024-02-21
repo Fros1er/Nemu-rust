@@ -1,3 +1,5 @@
+pub mod sdb;
+
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -5,8 +7,7 @@ use clap::Parser;
 use log::{info, LevelFilter};
 use simplelog::{Config, SimpleLogger, WriteLogger};
 use crate::device::init_device;
-use crate::isa::Isa;
-use crate::isa::riscv64::RISCV64;
+use crate::isa::{CPUState, Isa};
 use crate::memory::paddr::{init_mem, PMEM};
 use crate::utils::configs::{CONFIG_MBASE, CONFIG_PC_RESET_OFFSET};
 
@@ -61,12 +62,13 @@ fn load_img(img_file: Option<&String>) -> usize {
     }
 }
 
-pub fn init_monitor() {
+pub fn init_monitor<U: CPUState, T: Isa<U>>() -> T {
     let args = Args::parse();
     init_log(args.log.as_ref());
     init_mem();
     init_device();
-    let mut rv = RISCV64::new();
-    rv.init_isa();
+    let mut isa = T::new();
+    isa.init_isa();
     let img_size = load_img(args.image.as_ref());
+    isa
 }

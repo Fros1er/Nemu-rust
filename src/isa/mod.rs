@@ -9,6 +9,8 @@ pub struct AbstractContext {}
 pub trait CPUState {}
 
 pub trait Isa<T: CPUState> {
+    fn new() -> Self;
+
     // monitor
     fn isa_logo() -> &'static [u8];
     fn init_isa(&mut self);
