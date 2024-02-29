@@ -1,3 +1,4 @@
+use crate::memory::Memory;
 use crate::memory::paddr::PAddr;
 
 pub struct VAddr(usize);
@@ -14,27 +15,6 @@ impl VAddr {
     pub const fn new(addr: usize) -> Self {
         Self(addr)
     }
-    pub fn ifetch(&self, len: MemOperationSize) -> u64 {
-        self.read(len)
-    }
-    pub fn read(&self, len: MemOperationSize) -> u64 {
-        let paddr: PAddr = self.into();
-        match len {
-            MemOperationSize::Byte => paddr.read::<u8>() as u64,
-            MemOperationSize::WORD => paddr.read::<u16>() as u64,
-            MemOperationSize::DWORD => paddr.read::<u32>() as u64,
-            MemOperationSize::QWORD => paddr.read::<u64>(),
-        }
-    }
-    pub fn write(&self, data: u64, len: MemOperationSize) {
-        let paddr: PAddr = self.into();
-        match len {
-            MemOperationSize::Byte => paddr.write(data as u8),
-            MemOperationSize::WORD => paddr.write(data as u16),
-            MemOperationSize::DWORD => paddr.write(data as u32),
-            MemOperationSize::QWORD => paddr.write(data),
-        };
-    }
     pub fn value(&self) -> usize {
         self.0
     }
@@ -46,5 +26,30 @@ impl VAddr {
 impl From<PAddr> for VAddr {
     fn from(value: PAddr) -> Self {
         Self(value.value())
+    }
+}
+
+impl Memory {
+    pub fn ifetch(&self, vaddr: &VAddr, len: MemOperationSize) -> u64 {
+        self.read(vaddr, len)
+    }
+    pub fn read(&self, vaddr: &VAddr, len: MemOperationSize) -> u64 {
+        let paddr: PAddr = vaddr.into();
+        match len {
+            MemOperationSize::Byte => self.read_p::<u8>(&paddr) as u64,
+            MemOperationSize::WORD => self.read_p::<u16>(&paddr) as u64,
+            MemOperationSize::DWORD => self.read_p::<u32>(&paddr) as u64,
+            MemOperationSize::QWORD => self.read_p::<u64>(&paddr),
+        }
+    }
+
+    pub fn write(&mut self, vaddr: &VAddr, data: u64, len: MemOperationSize) {
+        let paddr: PAddr = vaddr.into();
+        match len {
+            MemOperationSize::Byte => self.write_p(&paddr, data as u8),
+            MemOperationSize::WORD => self.write_p(&paddr, data as u16),
+            MemOperationSize::DWORD => self.write_p(&paddr, data as u32),
+            MemOperationSize::QWORD => self.write_p(&paddr, data),
+        };
     }
 }

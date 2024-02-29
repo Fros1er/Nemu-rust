@@ -1,31 +1,27 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+use crate::memory::Memory;
 use crate::memory::vaddr::VAddr;
 
 pub(crate) mod riscv64;
 
-pub struct Instruction(u64);
-
-pub struct AbstractContext {}
-
-pub trait CPUState {}
-
-pub trait Isa<T: CPUState> {
-    fn new() -> Self;
+pub trait Isa {
+    fn new(memory: Rc<RefCell<Memory>>) -> Self;
 
     // monitor
     fn isa_logo() -> &'static [u8];
-    fn init_isa(&mut self);
     // reg
-    fn cpu_state() -> Box<T>;
-    fn isa_reg_display();
+    // fn cpu_state() -> Box<T>;
+    fn isa_reg_display(&self);
     fn isa_reg_str2val(name: &str) -> Result<u64, ()>;
-    // exec
-    fn isa_exec_once(&mut self);
+    // exec, true if not terminate
+    fn isa_exec_once(&mut self) -> bool;
     // mmu
     // todo
     // interrupt/exception
     fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr;
     fn isa_query_interrupt() -> u64;
     // difftest
-    fn isa_difftest_check_regs(ref_r: T, pc: VAddr) -> bool;
+    // fn isa_difftest_check_regs(ref_r: T, pc: VAddr) -> bool;
     fn isa_difftest_attach();
 }

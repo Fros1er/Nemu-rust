@@ -1,6 +1,8 @@
+use crate::memory::Memory;
 use crate::memory::vaddr::{MemOperationSize, VAddr};
 
-fn ifetch(pc: &mut VAddr, len: MemOperationSize) {
-    let inst = pc.ifetch(len);
-    pc.inc(len);
+pub fn ifetch(pc: &mut VAddr, memory: &Memory, len: MemOperationSize) -> u64 {
+    let inst = memory.ifetch(pc, len);
+    // pc.inc(len);
+    inst
 }

@@ -6,16 +6,14 @@ use std::path::Path;
 use clap::Parser;
 use log::{info, LevelFilter};
 use simplelog::{Config, SimpleLogger, WriteLogger};
-use crate::device::init_device;
-use crate::isa::{CPUState, Isa};
-use crate::memory::paddr::{init_mem, PMEM};
+use crate::memory::Memory;
 use crate::utils::configs::{CONFIG_MBASE, CONFIG_PC_RESET_OFFSET};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-struct Args {
+pub(crate) struct Args {
     /// IMAGE
-    image: Option<String>,
+    pub(crate) image: Option<String>,
 
     /// run with batch mode
     #[arg(short, long)]
@@ -23,7 +21,7 @@ struct Args {
 
     /// output log to FILE
     #[arg(short, long, value_name = "FILE")]
-    log: Option<String>,
+    pub(crate) log: Option<String>,
 
     // /// run DiffTest with reference REF_SO
     // #[arg(short, long, value_name = "REF_SO")]
@@ -47,28 +45,26 @@ pub fn init_log(log_file: Option<&String>) {
     }.expect("Failed to create logger.");
 }
 
-fn load_img(img_file: Option<&String>) -> usize {
+pub(crate) fn load_img(img_file: Option<&String>, memory: &mut Memory) -> usize {
     match img_file {
         None => {
             info!("No image is given. Use the default build-in image.");
             4096
         }
         Some(img_file) => {
-            unsafe {
-                let start = (CONFIG_MBASE + CONFIG_PC_RESET_OFFSET).to_host_arr_index();
-                File::open(Path::new(img_file)).unwrap().read(&mut PMEM[start..]).unwrap()
-            }
+            let start = (CONFIG_MBASE + CONFIG_PC_RESET_OFFSET).to_host_arr_index();
+            File::open(Path::new(img_file)).unwrap().read(&mut memory.pmem[start..]).unwrap()
         }
     }
 }
 
-pub fn init_monitor<U: CPUState, T: Isa<U>>() -> T {
-    let args = Args::parse();
-    init_log(args.log.as_ref());
-    init_mem();
-    init_device();
-    let mut isa = T::new();
-    isa.init_isa();
-    let img_size = load_img(args.image.as_ref());
-    isa
-}
+// pub fn init_monitor<U: CPUState, T: Isa<U>>() -> T {
+//     let args = Args::parse();
+//     init_log(args.log.as_ref());
+//     init_mem();
+//     init_device();
+//     let mut isa = T::new();
+//     isa.init_isa();
+//     let img_size = load_img(args.image.as_ref());
+//     isa
+// }

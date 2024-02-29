@@ -1,6 +1,10 @@
 use log::info;
 
-pub fn init_device() {
-    // todo
-    info!("No device yet")
+pub struct Device {}
+
+impl Device {
+    pub fn new() -> Self {
+        info!("No device yet");
+        Self {}
+    }
 }

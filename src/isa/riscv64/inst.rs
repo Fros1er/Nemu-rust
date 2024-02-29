@@ -1,5 +1,5 @@
 use crate::isa::riscv64::inst::InstType::{R, I, S, B, U, J};
-use crate::isa::riscv64::reg::{Reg, RegName};
+use crate::isa::riscv64::reg::Reg;
 use crate::isa::riscv64::RISCV64CpuState;
 use crate::memory::vaddr::MemOperationSize::Byte;
 use crate::memory::vaddr::VAddr;
@@ -102,7 +102,6 @@ impl Decode {
 }
 
 fn make_pattern(pat: &str, inst_type: InstType, name: &'static str, op: fn(Decode, &mut RISCV64CpuState)) -> Pattern {
-    let pat = "??????? ????? ????? ??? ????? 00101 11";
     let mut mask: u64 = 0;
     let mut key: u64 = 0;
     let mut cnt = 0;
@@ -116,7 +115,10 @@ fn make_pattern(pat: &str, inst_type: InstType, name: &'static str, op: fn(Decod
                 mask = (mask << 1) | 1;
                 key <<= 1;
             }
-            '?' => {}
+            '?' => {
+                mask <<= 1;
+                key <<= 1;
+            }
             ' ' => continue,
             _ => panic!("Bad pattern {}", pat)
         }
@@ -144,26 +146,30 @@ pub fn init_patterns() -> Vec<Pattern> {
             state.regs[inst.rd as u8] = (state.pc.value() as u64 + inst.imm) as Reg;
         }),
         make_pattern("??????? ????? ????? 100 ????? 00000 11", I, "lbu", |inst, state| {
-            state.regs[inst.rd as u8] = VAddr::new((inst.imm + inst.src1(state)) as usize).read(Byte);
+            state.regs[inst.rd as u8] = state.memory.borrow().read(&VAddr::new((inst.imm + inst.src1(state)) as usize), Byte);
         }),
         make_pattern("??????? ????? ????? 000 ????? 01000 11", S, "sb", |inst, state| {
-            VAddr::new((inst.imm + inst.src1(state)) as usize).write(inst.rs2 as u64, Byte);
+            state.memory.borrow_mut().write(&VAddr::new((inst.imm + inst.src1(state)) as usize), inst.rs2, Byte);
+        }),
+        make_pattern("0000000 00001 00000 000 00000 11100 11", I, "ebreak", |inst, state| {
+            state.trap()
         }),
     ]
-    //
-    // make_pattern("0000000 00001 00000 000 00000 11100 11", "ebreak", |inst, state| {
-    //     NEMUTRAP(s->pc, R(10))
-    // }); // R(10) is $a0
-    // make_pattern("??????? ????? ????? ??? ????? ????? ??", "inv", |inst, state| {
-    //     INV(s->pc)
-    // });
 }
 
 // #[cfg(test)]
 // mod tests {
+//     use crate::isa::riscv64::inst::InstType::{I, S};
+//     use crate::isa::riscv64::inst::make_pattern;
+//     use crate::memory::vaddr::MemOperationSize::Byte;
+//     use crate::memory::vaddr::VAddr;
+//
 //     #[test]
 //     fn it_works() {
-//         let x = 0b111_10100_1111111;
-//         println!("{:b}", bits!(x, 6, 0));
+//         let pat = make_pattern("??????? ????? ????? 100 ????? 00000 11", I, "lbu", |inst, state| {
+//             state.regs[inst.rd as u8] = state.memory.borrow().read(&VAddr::new((inst.imm + inst.src1(state)) as usize), Byte);
+//         });
+//         println!("mask:{:x} key:{:x}", pat.mask, pat.key);
+//         assert!(pat.match_inst(&0x0102c503u64));
 //     }
 // }

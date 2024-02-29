@@ -1,11 +1,12 @@
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
-use crate::isa::{CPUState, Isa};
+use crate::Emulator;
+use crate::isa::Isa;
 
 fn help(cmd: &str) {
-    if &cmd[0..4] != "help" {
+    if !cmd.starts_with("help") {
         unknown_sdb_command(cmd);
-        return
+        return;
     }
     println!("help: Display information about all supported commands");
     println!("c: Continue the execution of the program");
@@ -16,7 +17,7 @@ fn unknown_sdb_command(cmd: &str) {
     println!("Unknown command: {}", cmd.split_once(' ').unwrap_or((cmd, "")).0);
 }
 
-pub fn sdb_loop<U: CPUState, T: Isa<U>>(isa: &mut T) {
+pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) {
     let mut rl = DefaultEditor::new().unwrap();
     loop {
         let readline = rl.readline(">> ");
@@ -28,7 +29,25 @@ pub fn sdb_loop<U: CPUState, T: Isa<U>>(isa: &mut T) {
                 }
                 match line.as_bytes()[0] as char {
                     'h' => help(line.as_str()),
-                    'c' => isa.isa_exec_once();
+                    'c' => {
+                        loop {
+                            if !emulator.cpu.isa_exec_once() {
+                                return;
+                            }
+                        }
+                    },
+                    'q' => return,
+                    's' => { // si
+                        if !emulator.cpu.isa_exec_once() {
+                            return;
+                        }
+                    },
+                    'i' => emulator.cpu.isa_reg_display(), // info r(reg) / info w(watchpoint)
+                    'x' => {}, // x N expr: mem[eval(expr)..N*4]
+                    'p' => {}, // p expr: eval(expr)
+                    'w' => {}, // w expr: pause when mem[eval(expr)] changes
+                    'd' => {}, // d N: delete watchpoint N
+
                     _ => unknown_sdb_command(line.as_str())
                 }
             }
