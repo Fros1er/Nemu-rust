@@ -1,5 +1,5 @@
 pub mod configs;
-mod disasm;
+pub mod disasm;
 
 #[cfg(test)]
 pub mod tests {
@@ -18,7 +18,7 @@ pub mod tests {
         Emulator::<RISCV64> {
             cpu,
             memory,
-            device,
+            _device: device,
         }
     }
 }

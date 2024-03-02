@@ -9,6 +9,7 @@ use crate::memory::vaddr::MemOperationSize::DWORD;
 use crate::memory::vaddr::VAddr;
 use crate::memory::Memory;
 use crate::utils::configs::{CONFIG_MBASE, CONFIG_PC_RESET_OFFSET};
+use crate::utils::disasm::LLVMDisassembler;
 use log::{error, info};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -22,6 +23,7 @@ mod reg;
 pub(crate) struct RISCV64 {
     state: RISCV64CpuState,
     instruction_patterns: Vec<Pattern>,
+    disassembler: LLVMDisassembler,
 }
 
 impl RISCV64CpuState {
@@ -30,6 +32,7 @@ impl RISCV64CpuState {
             regs: Registers::new(),
             csrs: CSR::new(),
             pc: VAddr::new(0),
+            dyn_pc: None,
             memory,
         }
     }
@@ -39,6 +42,7 @@ pub(crate) struct RISCV64CpuState {
     regs: Registers,
     csrs: CSR,
     pc: VAddr,
+    dyn_pc: Option<VAddr>,
     memory: Rc<RefCell<Memory>>,
 }
 
@@ -67,6 +71,7 @@ impl Isa for RISCV64 {
         RISCV64 {
             state,
             instruction_patterns: init_patterns(),
+            disassembler: LLVMDisassembler::new("riscv64-unknown-linux-gnu"),
         }
     }
     fn isa_logo() -> &'static [u8] {
@@ -105,12 +110,20 @@ impl Isa for RISCV64 {
             .find(|p| p.match_inst(&inst))
         {
             None => {
-                error!("invalid inst: {:x}", inst);
+                error!("invalid inst: {:#x} at addr {:#x}", inst, self.state.pc.value());
+                error!("disasm as: {}", self.disassembler.disassemble(inst as u32));
                 return false;
             }
             Some(pat) => pat.exec(&inst, &mut self.state),
         }
-        self.state.pc.inc(DWORD);
+
+        match &self.state.dyn_pc {
+            Some(pc) => self.state.pc = *pc,
+            None => self.state.pc.inc(DWORD),
+        }
+        self.state.dyn_pc = None;
+        self.state.regs[0] = 0;
+
         if self.state.csrs[mcause] == Breakpoint as u64 {
             info!("ebreak at pc {:#x}", self.state.pc.value() - 4);
             return false;

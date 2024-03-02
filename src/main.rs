@@ -24,7 +24,7 @@ fn get_exit_status() -> ExitCode {
 pub struct Emulator<T: Isa> {
     cpu: T,
     memory: Rc<RefCell<Memory>>,
-    device: Device,
+    _device: Device,
 }
 
 impl<T: Isa> Emulator<T> {
@@ -35,12 +35,12 @@ impl<T: Isa> Emulator<T> {
         let memory = Rc::new(RefCell::new(Memory::new())); // init mem
         let device = Device::new(); // init device
         let cpu = T::new(memory.clone());
-        let img_size = monitor::load_img(args.image.as_ref(), memory.borrow_mut().deref_mut());
+        let _img_size = monitor::load_img(args.image.as_ref(), memory.borrow_mut().deref_mut());
 
         Emulator {
             cpu,
             memory,
-            device,
+            _device: device,
         }
     }
 

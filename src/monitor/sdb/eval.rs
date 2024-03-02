@@ -157,7 +157,6 @@ pub fn eval<T: Isa>(expr: &str, emulator: &Emulator<T>) -> Result<i64, String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::isa::Isa;
     use crate::memory::paddr::PAddrDiff;
     use crate::memory::vaddr::MemOperationSize::QWORD;
     use crate::memory::vaddr::VAddr;

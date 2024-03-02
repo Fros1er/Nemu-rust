@@ -1,6 +1,7 @@
-use crate::memory::Memory;
 use crate::memory::paddr::PAddr;
+use crate::memory::Memory;
 
+#[derive(Copy, Clone)]
 pub struct VAddr(usize);
 
 #[derive(Copy, Clone)]
