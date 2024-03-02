@@ -1,4 +1,3 @@
-use crate::cpu::ifetch::ifetch;
 use crate::isa::riscv64::inst::{init_patterns, Pattern};
 use crate::isa::riscv64::logo::RISCV_LOGO;
 use crate::isa::riscv64::reg::CSRName::{mcause, mepc};
@@ -6,12 +5,12 @@ use crate::isa::riscv64::reg::MCauseCode::Breakpoint;
 use crate::isa::riscv64::reg::{CSRName, Reg, RegName, Registers, CSR};
 use crate::isa::Isa;
 use crate::memory::paddr::PAddr;
-use crate::memory::vaddr::{MemOperationSize, VAddr};
+use crate::memory::vaddr::MemOperationSize::DWORD;
+use crate::memory::vaddr::VAddr;
 use crate::memory::Memory;
 use crate::utils::configs::{CONFIG_MBASE, CONFIG_PC_RESET_OFFSET};
-use log::info;
+use log::{error, info};
 use std::cell::RefCell;
-use std::ops::Deref;
 use std::rc::Rc;
 use std::str::FromStr;
 use strum::IntoEnumIterator;
@@ -73,11 +72,6 @@ impl Isa for RISCV64 {
     fn isa_logo() -> &'static [u8] {
         RISCV_LOGO
     }
-
-    // fn cpu_state() -> Box<RISCV64CpuState> {
-    //     todo!()
-    // }
-
     fn isa_reg_display(&self) {
         for reg in RegName::iter() {
             println!("{:?}: {:#x}", reg, self.state.regs[reg.clone()]);
@@ -103,21 +97,20 @@ impl Isa for RISCV64 {
 
     fn isa_exec_once(&mut self) -> bool {
         // ifetch
-        let inst = ifetch(
-            &mut self.state.pc,
-            self.state.memory.borrow().deref(),
-            MemOperationSize::DWORD,
-        );
+        let inst = self.state.memory.borrow().ifetch(&self.state.pc, DWORD);
         // decode exec
         match self
             .instruction_patterns
             .iter()
             .find(|p| p.match_inst(&inst))
         {
-            None => panic!("invalid inst: {:x}", inst),
+            None => {
+                error!("invalid inst: {:x}", inst);
+                return false;
+            }
             Some(pat) => pat.exec(&inst, &mut self.state),
         }
-        self.state.pc.inc(MemOperationSize::DWORD); // TODO
+        self.state.pc.inc(DWORD);
         if self.state.csrs[mcause] == Breakpoint as u64 {
             info!("ebreak at pc {:#x}", self.state.pc.value() - 4);
             return false;
@@ -125,21 +118,21 @@ impl Isa for RISCV64 {
         true
     }
 
-    fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr {
-        todo!()
-    }
-
-    fn isa_query_interrupt() -> u64 {
-        todo!()
-    }
+    // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr {
+    //     todo!()
+    // }
+    //
+    // fn isa_query_interrupt() -> u64 {
+    //     todo!()
+    // }
 
     // fn isa_difftest_check_regs(ref_r: RISCV64CpuState, pc: VAddr) -> bool {
     //     todo!()
     // }
 
-    fn isa_difftest_attach() {
-        todo!()
-    }
+    // fn isa_difftest_attach() {
+    //     todo!()
+    // }
 }
 
 #[cfg(test)]

@@ -141,7 +141,6 @@ pub fn eval_expr<T: Isa>(expr: &Expr, emulator: &Emulator<T>) -> Result<i64, Str
         Expr::AND(a, b) => Ok(i64::from(
             eval_expr(a, emulator)? != 0 && eval_expr(b, emulator)? != 0,
         )),
-        _ => todo!(), // We'll handle other cases later
     }
 }
 

@@ -1,4 +1,6 @@
 pub mod configs;
+mod disasm;
+
 #[cfg(test)]
 pub mod tests {
     use crate::device::Device;

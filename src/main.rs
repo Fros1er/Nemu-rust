@@ -10,7 +10,6 @@ use std::ops::DerefMut;
 use std::process::ExitCode;
 use std::rc::Rc;
 
-mod cpu;
 mod device;
 mod engine;
 mod isa;

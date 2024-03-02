@@ -1,4 +1,4 @@
-use crate::isa::riscv64::inst::InstType::{R, I, S, B, U, J};
+use crate::isa::riscv64::inst::InstType::{B, I, J, R, S, U};
 use crate::isa::riscv64::reg::Reg;
 use crate::isa::riscv64::RISCV64CpuState;
 use crate::memory::vaddr::MemOperationSize::Byte;
@@ -70,12 +70,7 @@ impl Pattern {
                 rd = bits!(inst, 11, 7);
             }
         }
-        Decode {
-            rd,
-            rs1,
-            rs2,
-            imm,
-        }
+        Decode { rd, rs1, rs2, imm }
     }
 
     pub fn exec(&self, inst: &u64, state: &mut RISCV64CpuState) {
@@ -101,7 +96,12 @@ impl Decode {
     }
 }
 
-fn make_pattern(pat: &str, inst_type: InstType, name: &'static str, op: fn(Decode, &mut RISCV64CpuState)) -> Pattern {
+fn make_pattern(
+    pat: &str,
+    inst_type: InstType,
+    name: &'static str,
+    op: fn(Decode, &mut RISCV64CpuState),
+) -> Pattern {
     let mut mask: u64 = 0;
     let mut key: u64 = 0;
     let mut cnt = 0;
@@ -120,7 +120,7 @@ fn make_pattern(pat: &str, inst_type: InstType, name: &'static str, op: fn(Decod
                 key <<= 1;
             }
             ' ' => continue,
-            _ => panic!("Bad pattern {}", pat)
+            _ => panic!("Bad pattern {}", pat),
         }
         cnt += 1;
         if cnt > 32 {
@@ -142,18 +142,43 @@ fn make_pattern(pat: &str, inst_type: InstType, name: &'static str, op: fn(Decod
 
 pub fn init_patterns() -> Vec<Pattern> {
     vec![
-        make_pattern("??????? ????? ????? ??? ????? 00101 11", U, "auipc", |inst, state| {
-            state.regs[inst.rd as u8] = (state.pc.value() as u64 + inst.imm) as Reg;
-        }),
-        make_pattern("??????? ????? ????? 100 ????? 00000 11", I, "lbu", |inst, state| {
-            state.regs[inst.rd as u8] = state.memory.borrow().read(&VAddr::new((inst.imm + inst.src1(state)) as usize), Byte);
-        }),
-        make_pattern("??????? ????? ????? 000 ????? 01000 11", S, "sb", |inst, state| {
-            state.memory.borrow_mut().write(&VAddr::new((inst.imm + inst.src1(state)) as usize), inst.rs2, Byte);
-        }),
-        make_pattern("0000000 00001 00000 000 00000 11100 11", I, "ebreak", |inst, state| {
-            state.trap()
-        }),
+        make_pattern(
+            "??????? ????? ????? ??? ????? 00101 11",
+            U,
+            "auipc",
+            |inst, state| {
+                state.regs[inst.rd as u8] = (state.pc.value() as u64 + inst.imm) as Reg;
+            },
+        ),
+        make_pattern(
+            "??????? ????? ????? 100 ????? 00000 11",
+            I,
+            "lbu",
+            |inst, state| {
+                state.regs[inst.rd as u8] = state
+                    .memory
+                    .borrow()
+                    .read(&VAddr::new((inst.imm + inst.src1(state)) as usize), Byte);
+            },
+        ),
+        make_pattern(
+            "??????? ????? ????? 000 ????? 01000 11",
+            S,
+            "sb",
+            |inst, state| {
+                state.memory.borrow_mut().write(
+                    &VAddr::new((inst.imm + inst.src1(state)) as usize),
+                    inst.rs2,
+                    Byte,
+                );
+            },
+        ),
+        make_pattern(
+            "0000000 00001 00000 000 00000 11100 11",
+            I,
+            "ebreak",
+            |_inst, state| state.trap(),
+        ),
     ]
 }
 

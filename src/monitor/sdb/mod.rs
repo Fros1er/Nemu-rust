@@ -3,7 +3,6 @@ pub mod eval;
 use crate::isa::Isa;
 use crate::monitor::sdb::eval::{eval, eval_expr, parse, Expr};
 use crate::Emulator;
-use chumsky::Parser;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::collections::HashMap;

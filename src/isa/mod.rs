@@ -1,4 +1,3 @@
-use crate::memory::vaddr::VAddr;
 use crate::memory::Memory;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,9 +18,9 @@ pub trait Isa {
     // mmu
     // todo
     // interrupt/exception
-    fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr;
-    fn isa_query_interrupt() -> u64;
+    // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr;
+    // fn isa_query_interrupt() -> u64;
     // difftest
     // fn isa_difftest_check_regs(ref_r: T, pc: VAddr) -> bool;
-    fn isa_difftest_attach();
+    // fn isa_difftest_attach();
 }
