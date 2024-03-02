@@ -1,7 +1,7 @@
+use crate::memory::vaddr::VAddr;
+use crate::memory::Memory;
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::memory::Memory;
-use crate::memory::vaddr::VAddr;
 
 pub(crate) mod riscv64;
 
@@ -13,7 +13,7 @@ pub trait Isa {
     // reg
     // fn cpu_state() -> Box<T>;
     fn isa_reg_display(&self);
-    fn isa_reg_str2val(name: &str) -> Result<u64, ()>;
+    fn isa_get_reg_by_name(&self, name: &str) -> Result<u64, String>;
     // exec, true if not terminate
     fn isa_exec_once(&mut self) -> bool;
     // mmu

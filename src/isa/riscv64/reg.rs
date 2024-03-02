@@ -1,5 +1,5 @@
 use std::ops::{Index, IndexMut};
-use strum_macros::EnumIter; // 0.17.1
+use strum_macros::{EnumIter, EnumString}; // 0.17.1
 
 pub type Reg = u64;
 
@@ -11,7 +11,6 @@ impl Registers {
     }
 }
 
-
 pub struct CSR([Reg; 2]);
 
 impl CSR {
@@ -21,12 +20,11 @@ impl CSR {
 }
 
 pub enum MCauseCode {
-    Breakpoint = 3
+    Breakpoint = 3,
 }
 
-
 #[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, EnumIter)]
+#[derive(Debug, Copy, Clone, EnumIter, EnumString)]
 pub enum RegName {
     zero,
     ra,
@@ -63,7 +61,7 @@ pub enum RegName {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, EnumIter)]
+#[derive(Debug, Copy, Clone, EnumIter, EnumString)]
 pub enum CSRName {
     mepc,
     mcause,
@@ -87,6 +85,12 @@ impl Index<RegName> for Registers {
 
 impl IndexMut<u8> for Registers {
     fn index_mut(&mut self, index: u8) -> &mut Self::Output {
+        &mut self.0[index as usize]
+    }
+}
+
+impl IndexMut<RegName> for Registers {
+    fn index_mut(&mut self, index: RegName) -> &mut Self::Output {
         &mut self.0[index as usize]
     }
 }

@@ -1,4 +1,5 @@
 use crate::memory::paddr::{PAddr, PAddrDiff};
+use std::ops::Index;
 
 pub const CONFIG_MSIZE: usize = 0x8000000;
 pub const CONFIG_MBASE: PAddr = PAddr::new(0x80000000);
