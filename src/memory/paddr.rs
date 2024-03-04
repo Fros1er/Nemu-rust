@@ -8,16 +8,16 @@ use crate::memory::vaddr::VAddr;
 use crate::utils::configs::{CONFIG_MBASE, CONFIG_MSIZE};
 
 //noinspection RsStructNaming
-pub struct PAddr(usize);
+pub struct PAddr(u64);
 
 impl PAddr {
-    pub const fn new(addr: usize) -> Self {
+    pub const fn new(addr: u64) -> Self {
         Self(addr)
     }
-    pub fn to_host_arr_index(&self) -> usize {
+    pub fn to_host_arr_index(&self) -> u64 {
         self.0 - CONFIG_MBASE.0
     }
-    pub fn value(&self) -> usize {
+    pub fn value(&self) -> u64 {
         self.0
     }
 }
@@ -28,10 +28,10 @@ impl From<&VAddr> for PAddr {
     }
 }
 
-pub struct PAddrDiff(usize);
+pub struct PAddrDiff(u64);
 
 impl PAddrDiff {
-    pub const fn new(addr: usize) -> PAddrDiff {
+    pub const fn new(addr: u64) -> PAddrDiff {
         PAddrDiff(addr)
     }
 }
@@ -57,10 +57,10 @@ lazy_static! {
 
 impl Memory {
     fn get_ptr<T: Num>(&self, paddr: &PAddr) -> *const T {
-        addr_of!(self.pmem[paddr.to_host_arr_index()]) as *const T
+        addr_of!(self.pmem[paddr.to_host_arr_index() as usize]) as *const T
     }
     fn get_ptr_mut<T: Num>(&mut self, paddr: &PAddr) -> *mut T {
-        addr_of_mut!(self.pmem[paddr.to_host_arr_index()]) as *mut T
+        addr_of_mut!(self.pmem[paddr.to_host_arr_index() as usize]) as *mut T
     }
     pub fn read_p<T: Num>(&self, paddr: &PAddr) -> T {
         unsafe {

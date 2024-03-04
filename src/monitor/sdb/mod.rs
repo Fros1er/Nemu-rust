@@ -1,4 +1,6 @@
 pub mod eval;
+pub mod difftest_qemu;
+mod gdb_interface;
 
 use crate::isa::Isa;
 use crate::monitor::sdb::eval::{eval, eval_expr, parse, Expr};
@@ -6,6 +8,7 @@ use crate::Emulator;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::collections::HashMap;
+use cfg_if::cfg_if;
 
 fn unknown_sdb_command(cmd: &str) {
     println!(
@@ -23,9 +26,34 @@ struct WatchPoint {
 fn exec_once<T: Isa>(
     emulator: &mut Emulator<T>,
     watchpoints: &mut HashMap<u32, WatchPoint>,
+    breakpoints: &HashMap<u32, u64>,
+    _inst_count: i32,
 ) -> (bool, bool) {
+    cfg_if! {
+        if #[cfg(feature="difftest")] {
+            if emulator.difftest_ctx.is_some() {
+                emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.step();
+            }
+        }
+    }
+
     let not_halt = emulator.cpu.isa_exec_once();
-    let mut watchpoint_matched = false;
+    let mut pause = false;
+
+    cfg_if! {
+        if #[cfg(feature="difftest")] {
+            if emulator.difftest_ctx.is_some() {
+                let difftest_regs = emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.read_regs_64();
+                let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
+                if difftest_res.is_err() {
+                    println!("{}", difftest_res.err().unwrap());
+                    return (false, false);
+                }
+                println!("identical at pc {:#x}, {} inst in total", emulator.cpu.isa_get_pc(), _inst_count);
+            }
+        }
+    }
+
     for (idx, watchpoint) in watchpoints.iter_mut() {
         let eval_res = eval_expr(&watchpoint.expr, emulator);
         if eval_res != Ok(watchpoint.prev_val) {
@@ -38,18 +66,28 @@ fn exec_once<T: Isa>(
                 }
                 Err(err) => println!("{}", err),
             }
-            watchpoint_matched = true;
+            pause = true;
         }
     }
-    (not_halt, watchpoint_matched)
+    for (idx, breakpoint) in breakpoints.iter() {
+        if emulator.cpu.isa_get_pc() == *breakpoint {
+            println!("Breakpoint {}: {}", idx, breakpoint);
+            pause = true;
+            break;
+        }
+    }
+    (not_halt, pause)
 }
 
-pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) {
+pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> i32 {
     let mut rl = DefaultEditor::new().unwrap();
     let mut watchpoints: HashMap<u32, WatchPoint> = HashMap::new();
+    let mut breakpoints: HashMap<u32, u64> = HashMap::new();
     let mut next_watchpoint_idx = 0;
+    let mut next_breakpoint_idx = 0;
+    let mut inst_count = 0;
     loop {
-        let readline = rl.readline(">> ");
+        let readline = rl.readline(format!("({:#x})>> ", emulator.cpu.isa_get_pc()).as_str());
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str()).expect("Rustyline err");
@@ -65,6 +103,7 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) {
                             println!("i: display reg");
                             println!("p expr: eval(expr)");
                             println!("w expr: set watchpoint expr");
+                            println!("b addr: set breakpoint addr");
                             println!("d N: del watchpoint N");
                             println!("q: Exit");
                         } else {
@@ -72,19 +111,21 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) {
                         }
                     }
                     'c' => loop {
-                        let (not_halt, wp_matched) = exec_once(emulator, &mut watchpoints);
+                        inst_count += 1;
+                        let (not_halt, wp_matched) = exec_once(emulator, &mut watchpoints, &breakpoints, inst_count);
                         if !not_halt {
-                            return;
+                            return inst_count;
                         }
                         if wp_matched {
                             break;
                         }
                     },
-                    'q' => return,
+                    'q' => return inst_count,
                     's' => {
                         // si
-                        if !exec_once(emulator, &mut watchpoints).0 {
-                            return;
+                        inst_count += 1;
+                        if !exec_once(emulator, &mut watchpoints, &breakpoints, inst_count).0 {
+                            return inst_count;
                         }
                     }
                     'i' => emulator.cpu.isa_reg_display(), // info r(reg) / info w(watchpoint)
@@ -112,6 +153,16 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) {
                             Err(err) => println!("{}", err),
                         }
                     } // w expr: pause when mem[eval(expr)] changes
+                    'b' => {
+                        match u64::from_str_radix(line[1..].trim(), 16) {
+                            Ok(addr) => {
+                                breakpoints.insert(next_breakpoint_idx, addr);
+                                println!("breakpoint {}: {}", next_breakpoint_idx, addr);
+                                next_breakpoint_idx += 1;
+                            }
+                            Err(err) => println!("{}", err)
+                        }
+                    }
                     'd' => match line[1..].parse::<u32>() {
                         Ok(num) => match watchpoints.remove(&num) {
                             Some(watchpoint) => println!(
@@ -135,9 +186,10 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) {
                 break;
             }
             Err(err) => {
-                println!("Error: {:?}", err);
+                println!("Readline Error: {:?}", err);
                 break;
             }
         }
     }
+    inst_count
 }

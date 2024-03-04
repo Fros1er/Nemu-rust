@@ -19,6 +19,10 @@ pub(crate) struct Args {
     #[arg(short, long)]
     batch: bool,
 
+    /// run with batch mode
+    #[arg(short, long)]
+    pub difftest: bool,
+
     /// output log to FILE
     #[arg(short, long, value_name = "FILE")]
     pub(crate) log: Option<String>,
@@ -56,7 +60,7 @@ pub(crate) fn load_img(img_file: Option<&String>, memory: &mut Memory) -> usize 
             let path = Path::new(img_file);
             File::open(path)
                 .unwrap()
-                .read(&mut memory.pmem[start..])
+                .read(&mut memory.pmem[start as usize..])
                 .unwrap()
         }
     }

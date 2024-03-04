@@ -2,7 +2,7 @@ use crate::isa::riscv64::inst::{init_patterns, Pattern};
 use crate::isa::riscv64::logo::RISCV_LOGO;
 use crate::isa::riscv64::reg::CSRName::{mcause, mepc};
 use crate::isa::riscv64::reg::MCauseCode::Breakpoint;
-use crate::isa::riscv64::reg::{CSRName, Reg, RegName, Registers, CSR};
+use crate::isa::riscv64::reg::{CSRName, Reg, RegName, Registers, CSR, format_regs};
 use crate::isa::Isa;
 use crate::memory::paddr::PAddr;
 use crate::memory::vaddr::MemOperationSize::DWORD;
@@ -10,15 +10,18 @@ use crate::memory::vaddr::VAddr;
 use crate::memory::Memory;
 use crate::utils::configs::{CONFIG_MBASE, CONFIG_PC_RESET_OFFSET};
 use crate::utils::disasm::LLVMDisassembler;
-use log::{error, info};
+use log::{error, info, trace};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::str::FromStr;
+use chumsky::chain::Chain;
 use strum::IntoEnumIterator;
+use crate::isa::riscv64::reg::RegName::{a1, a2, t0};
+use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 
 mod inst;
 mod logo;
-mod reg;
+pub mod reg;
 
 pub(crate) struct RISCV64 {
     state: RISCV64CpuState,
@@ -100,9 +103,18 @@ impl Isa for RISCV64 {
         Err("Reg not found".to_string())
     }
 
+    fn isa_get_pc(&self) -> u64 {
+        self.state.pc.value() as u64
+    }
+
     fn isa_exec_once(&mut self) -> bool {
         // ifetch
         let inst = self.state.memory.borrow().ifetch(&self.state.pc, DWORD);
+        trace!("{:#x}, {}", self.state.pc.value(), self.disassembler.disassemble(inst as u32,  self.state.pc.value() as u64));
+        if inst == 0x0000006f {
+            info!("dead loop at pc {:#x}", self.state.pc.value());
+            return false;
+        }
         // decode exec
         match self
             .instruction_patterns
@@ -111,7 +123,7 @@ impl Isa for RISCV64 {
         {
             None => {
                 error!("invalid inst: {:#x} at addr {:#x}", inst, self.state.pc.value());
-                error!("disasm as: {}", self.disassembler.disassemble(inst as u32));
+                error!("disasm as: {}", self.disassembler.disassemble(inst as u32, self.state.pc.value()));
                 return false;
             }
             Some(pat) => pat.exec(&inst, &mut self.state),
@@ -143,9 +155,39 @@ impl Isa for RISCV64 {
     //     todo!()
     // }
 
-    // fn isa_difftest_attach() {
-    //     todo!()
-    // }
+    fn isa_difftest_init(&mut self) -> DifftestInfo {
+        self.state.regs[t0] = 0x80000000;
+        self.state.regs[a1] = 0x8fe00000;
+        self.state.regs[a2] = 0x1028;
+        DifftestInfo {
+            qemu_bin: "/opt/qemu/bin/qemu-system-riscv64".to_string(),
+            reset_vec: 0x80000000,
+        }
+    }
+
+    fn isa_difftest_check_regs(&self, difftest_regs: &Vec<u64>) -> Result<(), String> {
+        if difftest_regs.len() != 33 {
+            return Err(format!("number of regs mismatch: local 33, difftest {}.",
+                               difftest_regs.len()));
+        }
+
+        if self.state.pc.value() != difftest_regs[32] {
+            return Err(format!("pc mismatch: local {:#x}, difftest {:#x}.", self.state.pc.value(), difftest_regs[32]));
+        }
+
+        for i in 1..32 {
+            if difftest_regs[i] != self.state.regs[i as u8] {
+                let reg_str: &str = RegName::iter().nth(i).unwrap().into();
+                return Err(format!("Reg {} is different: local {:#x}, difftest {:#x}.\nfull: {}{}",
+                                   reg_str, self.state.regs[i as u8], difftest_regs[i],
+                                   format_regs(&(self.state.regs.0), self.state.pc.value()),
+                                   format_regs(&difftest_regs[..32], difftest_regs[32]),
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

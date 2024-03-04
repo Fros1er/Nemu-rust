@@ -19,6 +19,7 @@ pub mod tests {
             cpu,
             memory,
             _device: device,
+            difftest_ctx: None
         }
     }
 }

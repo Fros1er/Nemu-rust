@@ -125,7 +125,7 @@ pub fn eval_expr<T: Isa>(expr: &Expr, emulator: &Emulator<T>) -> Result<i64, Str
             .isa_get_reg_by_name(x.as_str())
             .map(|v| v as i64),
         Expr::Deref(a) => {
-            Ok(memory.read(&VAddr::new(eval_expr(a, emulator)? as usize), DWORD) as i64)
+            Ok(memory.read(&VAddr::new(eval_expr(a, emulator)? as u64), DWORD) as i64)
         }
         Expr::Neg(a) => Ok(-eval_expr(a, emulator)?),
         Expr::Add(a, b) => Ok(eval_expr(a, emulator)? + eval_expr(b, emulator)?),
@@ -205,7 +205,7 @@ mod tests {
         let exp = "aaa * bbb".to_string();
         let emulator = fake_emulator();
         match eval(&exp, &emulator) {
-            Ok(res) => assert!(false),
+            Ok(_) => assert!(false),
             Err(err) => println!("ERR: {}", err),
         }
     }

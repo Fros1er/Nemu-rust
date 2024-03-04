@@ -1,7 +1,11 @@
 [package]
-name = "remu"
+name = "nemu-rust"
 version = "0.1.0"
 edition = "2021"
+
+[features]
+default = ["difftest"]
+difftest = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -10,7 +14,6 @@ clap = { version = "4.5.0", features = ["derive"] }
 config = "0.14.0"
 log = "0.4"
 simplelog = "^0.12.0"
-serde = { version = "1.0.196", features = ["derive"] }
 lazy_static = "1.4.0"
 num = "0.4.1"
 rustyline = "13.0.0"
@@ -18,3 +21,4 @@ strum = "0.26.1"
 strum_macros = "0.26.1"
 chumsky = "0.9.3"
 llvm-sys = "140.0"
+cfg-if = "1.0"

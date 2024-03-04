@@ -2,7 +2,7 @@ use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
 
 #[derive(Copy, Clone)]
-pub struct VAddr(usize);
+pub struct VAddr(u64);
 
 #[derive(Copy, Clone)]
 pub enum MemOperationSize {
@@ -13,14 +13,14 @@ pub enum MemOperationSize {
 }
 
 impl VAddr {
-    pub const fn new(addr: usize) -> Self {
+    pub const fn new(addr: u64) -> Self {
         Self(addr)
     }
-    pub fn value(&self) -> usize {
+    pub fn value(&self) -> u64 {
         self.0
     }
     pub fn inc(&mut self, len: MemOperationSize) {
-        self.0 += len as usize;
+        self.0 += len as u64;
     }
 }
 

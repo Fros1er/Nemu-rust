@@ -1,9 +1,10 @@
 use std::ops::{Index, IndexMut};
-use strum_macros::{EnumIter, EnumString}; // 0.17.1
+use strum::IntoEnumIterator;
+use strum_macros::{EnumIter, EnumString, IntoStaticStr}; // 0.17.1
 
 pub type Reg = u64;
 
-pub struct Registers([Reg; 32]);
+pub struct Registers(pub(crate) [Reg; 32]);
 
 impl Registers {
     pub(crate) fn new() -> Self {
@@ -24,7 +25,7 @@ pub enum MCauseCode {
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, EnumIter, EnumString)]
+#[derive(Debug, Copy, Clone, EnumIter, EnumString, IntoStaticStr)]
 pub enum RegName {
     zero,
     ra,
@@ -65,6 +66,16 @@ pub enum RegName {
 pub enum CSRName {
     mepc,
     mcause,
+}
+
+pub fn format_regs(regs: &[u64], pc: u64) -> String {
+    let mut res = String::new();
+    for i in 0..32 {
+        let reg_str: &str = RegName::iter().nth(i).unwrap().into();
+        res = format!("{}{}: {:#x}\n", res, reg_str, regs[i]);
+    }
+    res = format!("{}pc: {:#x}\n", res, pc);
+    res
 }
 
 impl Index<u8> for Registers {

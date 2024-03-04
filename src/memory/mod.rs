@@ -12,7 +12,7 @@ impl Memory {
     pub fn new() -> Self {
         init_mem();
         Self {
-            pmem: vec![0u8; CONFIG_MSIZE].into_boxed_slice()
+            pmem: vec![0u8; CONFIG_MSIZE as usize].into_boxed_slice()
         }
     }
 }
