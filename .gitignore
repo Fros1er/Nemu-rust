@@ -19,3 +19,6 @@ Cargo.lock
 /target
 
 .idea
+am-kernels/
+tests/
+abstract-machine/

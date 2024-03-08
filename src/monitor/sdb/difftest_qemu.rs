@@ -44,7 +44,7 @@ impl DifftestContext {
                     .stdout(Stdio::null())
                     .spawn().unwrap();
                 println!("Difftest enabled. qemu spawned with pid {}.", qemu_proc.id());
-                thread::sleep(time::Duration::from_millis(100));
+                thread::sleep(time::Duration::from_millis(200));
                 let mut gdb_ctx = GdbContext::new();
                 gdb_ctx.continue_to_addr(_info.reset_vec);
                 Self {

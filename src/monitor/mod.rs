@@ -15,13 +15,13 @@ pub(crate) struct Args {
     /// IMAGE
     pub(crate) image: Option<String>,
 
-    /// run with batch mode
+    /// run with difftest
     #[arg(short, long)]
-    batch: bool,
+    pub difftest: bool,
 
     /// run with batch mode
     #[arg(short, long)]
-    pub difftest: bool,
+    pub batch: bool,
 
     /// output log to FILE
     #[arg(short, long, value_name = "FILE")]

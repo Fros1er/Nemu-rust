@@ -78,10 +78,10 @@ pub fn format_regs(regs: &[u64], pc: u64) -> String {
     res
 }
 
-impl Index<u8> for Registers {
+impl Index<u64> for Registers {
     type Output = Reg;
 
-    fn index(&self, index: u8) -> &Self::Output {
+    fn index(&self, index: u64) -> &Self::Output {
         &self.0[index as usize]
     }
 }
@@ -94,8 +94,8 @@ impl Index<RegName> for Registers {
     }
 }
 
-impl IndexMut<u8> for Registers {
-    fn index_mut(&mut self, index: u8) -> &mut Self::Output {
+impl IndexMut<u64> for Registers {
+    fn index_mut(&mut self, index: u64) -> &mut Self::Output {
         &mut self.0[index as usize]
     }
 }

@@ -17,13 +17,13 @@ fn unknown_sdb_command(cmd: &str) {
     );
 }
 
-struct WatchPoint {
+pub struct WatchPoint {
     expr: Expr,
     expr_str: String,
     prev_val: i64,
 }
 
-fn exec_once<T: Isa>(
+pub fn exec_once<T: Isa>(
     emulator: &mut Emulator<T>,
     watchpoints: &mut HashMap<u32, WatchPoint>,
     breakpoints: &HashMap<u32, u64>,

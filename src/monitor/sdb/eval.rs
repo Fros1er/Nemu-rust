@@ -157,7 +157,6 @@ pub fn eval<T: Isa>(expr: &str, emulator: &Emulator<T>) -> Result<i64, String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::memory::paddr::PAddrDiff;
     use crate::memory::vaddr::MemOperationSize::QWORD;
     use crate::memory::vaddr::VAddr;
     use crate::monitor::sdb::eval::{eval, eval_expr, parser};
@@ -168,7 +167,7 @@ mod tests {
     #[test]
     fn mem_test() {
         let emulator = fake_emulator();
-        let test_addr: VAddr = (CONFIG_MBASE + PAddrDiff::new(8)).into();
+        let test_addr: VAddr = (CONFIG_MBASE + 8).into();
         emulator
             .memory
             .borrow_mut()

@@ -17,6 +17,8 @@ pub trait Isa {
     fn isa_get_pc(&self) -> u64;
     // exec, true if not terminate
     fn isa_exec_once(&mut self) -> bool;
+
+    fn isa_get_exit_code(&self) -> u8;
     // mmu
     // todo
     // interrupt/exception

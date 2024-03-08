@@ -1,5 +1,5 @@
-use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
+use crate::memory::paddr::PAddr;
 
 #[derive(Copy, Clone)]
 pub struct VAddr(u64);
@@ -10,6 +10,25 @@ pub enum MemOperationSize {
     WORD = 2,
     DWORD = 4,
     QWORD = 8,
+}
+
+impl MemOperationSize {
+    pub fn read_sized(&self, dst: *const u8) -> u64 {
+        match self {
+            MemOperationSize::Byte => unsafe { dst.read() as u64 }
+            MemOperationSize::WORD => unsafe { (dst as *const u16).read() as u64 }
+            MemOperationSize::DWORD => unsafe { (dst as *const u32).read() as u64 }
+            MemOperationSize::QWORD => unsafe { (dst as *const u64).read() }
+        }
+    }
+    pub fn write_sized(&self, data: u64, dst: *mut u8) {
+        match self {
+            MemOperationSize::Byte => unsafe { dst.write(data as u8) }
+            MemOperationSize::WORD => unsafe { (dst as *mut u16).write(data as u16) }
+            MemOperationSize::DWORD => unsafe { (dst as *mut u32).write(data as u32) }
+            MemOperationSize::QWORD => unsafe { (dst as *mut u64).write(data) }
+        }
+    }
 }
 
 impl VAddr {
@@ -35,22 +54,10 @@ impl Memory {
         self.read(vaddr, len)
     }
     pub fn read(&self, vaddr: &VAddr, len: MemOperationSize) -> u64 {
-        let paddr: PAddr = vaddr.into();
-        match len {
-            MemOperationSize::Byte => self.read_p::<u8>(&paddr) as u64,
-            MemOperationSize::WORD => self.read_p::<u16>(&paddr) as u64,
-            MemOperationSize::DWORD => self.read_p::<u32>(&paddr) as u64,
-            MemOperationSize::QWORD => self.read_p::<u64>(&paddr),
-        }
+        self.read_p(&vaddr.into(), len)
     }
 
     pub fn write(&mut self, vaddr: &VAddr, data: u64, len: MemOperationSize) {
-        let paddr: PAddr = vaddr.into();
-        match len {
-            MemOperationSize::Byte => self.write_p(&paddr, data as u8),
-            MemOperationSize::WORD => self.write_p(&paddr, data as u16),
-            MemOperationSize::DWORD => self.write_p(&paddr, data as u32),
-            MemOperationSize::QWORD => self.write_p(&paddr, data),
-        };
+        self.write_p(&vaddr.into(), data, len)
     }
 }

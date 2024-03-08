@@ -1,11 +1,12 @@
-use crate::device::Device;
+use crate::device::Devices;
 use crate::isa::riscv64::RISCV64;
 use crate::isa::Isa;
 use crate::memory::Memory;
 use crate::monitor::init_log;
-use crate::monitor::sdb::sdb_loop;
+use crate::monitor::sdb::{exec_once, sdb_loop};
 use clap::Parser;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ops::{DerefMut};
 use std::process::ExitCode;
 use std::rc::Rc;
@@ -18,15 +19,12 @@ mod memory;
 mod monitor;
 mod utils;
 
-fn get_exit_status() -> ExitCode {
-    ExitCode::from(0)
-}
-
 pub struct Emulator<T: Isa> {
     cpu: T,
     memory: Rc<RefCell<Memory>>,
-    _device: Device,
+    _device: Devices,
     difftest_ctx: Option<DifftestContext>,
+    batch: bool
 }
 
 impl<T: Isa> Emulator<T> {
@@ -35,7 +33,7 @@ impl<T: Isa> Emulator<T> {
         init_log(args.log.as_ref());
 
         let memory = Rc::new(RefCell::new(Memory::new())); // init mem
-        let device = Device::new(); // init device
+        let device = Devices::new(&mut *memory.borrow_mut()); // init device
         let mut cpu = T::new(memory.clone());
         let _img_size = monitor::load_img(args.image.as_ref(), memory.borrow_mut().deref_mut());
 
@@ -47,11 +45,24 @@ impl<T: Isa> Emulator<T> {
             memory,
             _device: device,
             difftest_ctx,
+            batch: args.batch
         }
     }
 
     pub fn run(&mut self) {
-        let cnt = sdb_loop(self);
+        let cnt = if !self.batch {
+            sdb_loop(self)
+        } else {
+            let mut inst_count= 0;
+            loop {
+               inst_count += 1;
+                let (not_halt, _) = exec_once(self, &mut HashMap::new(), &HashMap::new(), inst_count);
+                if !not_halt {
+                    break;
+                }
+            }
+            inst_count
+        };
         println!("Instruction executed: {}", cnt);
     }
 
@@ -60,11 +71,15 @@ impl<T: Isa> Emulator<T> {
             ctx.exit();
         }
     }
+
+    pub fn get_exit_status(&self) -> ExitCode {
+        ExitCode::from(self.cpu.isa_get_exit_code())
+    }
 }
 
 fn main() -> ExitCode {
     let mut emulator = Emulator::<RISCV64>::new();
     emulator.run();
     emulator.exit();
-    get_exit_status()
+    emulator.get_exit_status()
 }

@@ -16,7 +16,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 use chumsky::chain::Chain;
 use strum::IntoEnumIterator;
-use crate::isa::riscv64::reg::RegName::{a1, a2, t0};
+use crate::isa::riscv64::reg::RegName::{a0, a1, a2, t0};
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 
 mod inst;
@@ -68,7 +68,7 @@ const IMG: [u32; 5] = [
 impl Isa for RISCV64 {
     fn new(memory: Rc<RefCell<Memory>>) -> RISCV64 {
         let reset_addr: PAddr = CONFIG_MBASE + CONFIG_PC_RESET_OFFSET;
-        memory.borrow_mut().memcpy_p(&IMG, &reset_addr, IMG.len());
+        memory.borrow_mut().pmem_memcpy(&IMG, &reset_addr, 5);
         let mut state = RISCV64CpuState::new(memory);
         state.pc = reset_addr.into();
         RISCV64 {
@@ -113,6 +113,7 @@ impl Isa for RISCV64 {
         trace!("{:#x}, {}", self.state.pc.value(), self.disassembler.disassemble(inst as u32,  self.state.pc.value() as u64));
         if inst == 0x0000006f {
             info!("dead loop at pc {:#x}", self.state.pc.value());
+            self.state.regs[a0] = 1;
             return false;
         }
         // decode exec
@@ -124,6 +125,7 @@ impl Isa for RISCV64 {
             None => {
                 error!("invalid inst: {:#x} at addr {:#x}", inst, self.state.pc.value());
                 error!("disasm as: {}", self.disassembler.disassemble(inst as u32, self.state.pc.value()));
+                self.state.regs[a0] = 1;
                 return false;
             }
             Some(pat) => pat.exec(&inst, &mut self.state),
@@ -141,6 +143,10 @@ impl Isa for RISCV64 {
             return false;
         }
         true
+    }
+
+    fn isa_get_exit_code(&self) -> u8 {
+        self.state.regs[a0] as u8
     }
 
     // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr {
@@ -176,10 +182,10 @@ impl Isa for RISCV64 {
         }
 
         for i in 1..32 {
-            if difftest_regs[i] != self.state.regs[i as u8] {
+            if difftest_regs[i] != self.state.regs[i as u64] {
                 let reg_str: &str = RegName::iter().nth(i).unwrap().into();
                 return Err(format!("Reg {} is different: local {:#x}, difftest {:#x}.\nfull: {}{}",
-                                   reg_str, self.state.regs[i as u8], difftest_regs[i],
+                                   reg_str, self.state.regs[i as u64], difftest_regs[i],
                                    format_regs(&(self.state.regs.0), self.state.pc.value()),
                                    format_regs(&difftest_regs[..32], difftest_regs[32]),
                 ));

@@ -97,18 +97,18 @@ struct Decode {
 
 impl Decode {
     fn src1(&self, state: &RISCV64CpuState) -> u64 {
-        state.regs[self.rs1 as u8]
+        state.regs[self.rs1]
     }
 
     fn src1_u32(&self, state: &RISCV64CpuState) -> u32 {
-        state.regs[self.rs1 as u8] as u32
+        state.regs[self.rs1] as u32
     }
 
     fn src2(&self, state: &RISCV64CpuState) -> u64 {
-        state.regs[self.rs2 as u8]
+        state.regs[self.rs2]
     }
     fn src2_u32(&self, state: &RISCV64CpuState) -> u32 {
-        state.regs[self.rs2 as u8] as u32
+        state.regs[self.rs2] as u32
     }
 }
 
@@ -159,7 +159,7 @@ fn make_pattern(
 macro_rules! gen_load_u {
     ($size:expr) => {
         |inst, state| {
-            state.regs[inst.rd as u8] = state
+            state.regs[inst.rd] = state
                 .memory
                 .borrow()
                 .read(&VAddr::new(inst.imm + inst.src1(state)), $size)
@@ -170,7 +170,7 @@ macro_rules! gen_load_u {
 macro_rules! gen_load {
     ($size:expr) => {
         |inst, state| {
-            state.regs[inst.rd as u8] = sign_extend64(
+            state.regs[inst.rd] = sign_extend64(
                 state.memory.borrow()
                 .read(&VAddr::new(inst.imm + inst.src1(state)), $size), 8 * $size as usize) ;
         }
@@ -192,7 +192,7 @@ macro_rules! gen_store {
 macro_rules! gen_bit_op {
     ($op: tt) => {
         |inst, state| {
-            state.regs[inst.rd as u8] = inst.src1(state) $op inst.src2(state)
+            state.regs[inst.rd] = inst.src1(state) $op inst.src2(state)
         }
     };
 }
@@ -200,7 +200,7 @@ macro_rules! gen_bit_op {
 macro_rules! gen_bit_op_imm {
     ($op: tt) => {
         |inst, state| {
-            state.regs[inst.rd as u8] = inst.src1(state) $op inst.imm;
+            state.regs[inst.rd] = inst.src1(state) $op inst.imm;
         }
     };
 }
@@ -225,6 +225,22 @@ macro_rules! gen_branch_u {
     };
 }
 
+macro_rules! gen_arithmetic {
+    ($op: tt) => {
+        |inst, state| {
+            state.regs[inst.rd] = inst.src1(state).$op(inst.src2(state));
+        }
+    };
+}
+
+macro_rules! gen_arithmetic_w {
+    ($op: tt) => {
+        |inst, state| {
+            state.regs[inst.rd] = sign_extend64(inst.src1_u32(state).$op(inst.src2_u32(state)) as u64, 32);
+        }
+    };
+}
+
 
 
 pub fn init_patterns() -> Vec<Pattern> {
@@ -245,59 +261,32 @@ pub fn init_patterns() -> Vec<Pattern> {
         make_pattern(
             "??????? ????? ????? ??? ????? 0110111", U, "lui",
             |inst, state| {
-                state.regs[inst.rd as u8] = inst.imm;
+                state.regs[inst.rd] = inst.imm;
             },
         ),
 
-        // arithmetic
-        make_pattern(
-            "0000000 ????? ????? 000 ????? 0111011", R, "addw",
-            |inst, state| {
-                state.regs[inst.rd as u8] = inst.src1_u32(state).wrapping_add(inst.src2_u32(state)) as u64;
-            },
-        ),
+        // arithmeti
         make_pattern(
             "??????? ????? ????? 000 ????? 0010011", I, "addi",
             |inst, state| {
-                state.regs[inst.rd as u8] = inst.src1(state).wrapping_add(inst.imm);
+                state.regs[inst.rd] = inst.src1(state).wrapping_add(inst.imm);
             },
         ),
         make_pattern(
             "??????? ????? ????? 000 ????? 0011011", I, "addiw",
             |inst, state| {
-                state.regs[inst.rd as u8] = sign_extend64(inst.src1(state).wrapping_add(inst.imm), 32);
+                state.regs[inst.rd] = sign_extend64(inst.src1(state).wrapping_add(inst.imm), 32);
             },
         ),
-        make_pattern(
-            "0000000 ????? ????? 000 ????? 0110011", R, "add",
-            |inst, state| {
-                state.regs[inst.rd as u8] = inst.src1(state).wrapping_add(inst.src2(state));
-            },
-        ),
-        make_pattern(
-            "0100000 ????? ????? 000 ????? 0110011", R, "sub",
-            |inst, state| {
-                state.regs[inst.rd as u8] = inst.src1(state).wrapping_sub(inst.src2(state));
-            },
-        ),
-        make_pattern(
-            "0000001 ????? ????? 000 ????? 0111011", R, "mulw",
-            |inst, state| {
-                state.regs[inst.rd as u8] = sign_extend64(inst.src1_u32(state).wrapping_mul(inst.src2_u32(state)) as u64, 32);
-            },
-        ),
-        make_pattern(
-            "0000001 ????? ????? 100 ????? 0111011", R, "divw",
-            |inst, state| {
-                state.regs[inst.rd as u8] = sign_extend64(inst.src1_u32(state).wrapping_div(inst.src2_u32(state)) as u64, 32);
-            },
-        ),
-        make_pattern(
-            "0000001 ????? ????? 110 ????? 0111011", R, "remw",
-            |inst, state| {
-                state.regs[inst.rd as u8] = sign_extend64(inst.src1_u32(state).wrapping_rem(inst.src2_u32(state)) as u64, 32);
-            },
-        ),
+        make_pattern("0000000 ????? ????? 000 ????? 0110011", R, "add", gen_arithmetic!(wrapping_add)),
+        make_pattern("0100000 ????? ????? 000 ????? 0110011", R, "sub", gen_arithmetic!(wrapping_sub)),
+        make_pattern("0000001 ????? ????? 000 ????? 0110011", R, "mul", gen_arithmetic!(wrapping_mul)),
+        make_pattern("0000001 ????? ????? 100 ????? 0110011", R, "mul", gen_arithmetic!(wrapping_div)),
+        make_pattern("0000000 ????? ????? 000 ????? 0111011", R, "addw", gen_arithmetic_w!(wrapping_add)),
+        make_pattern("0100000 ????? ????? 000 ????? 0111011", R, "subw", gen_arithmetic_w!(wrapping_sub)),
+        make_pattern("0000001 ????? ????? 000 ????? 0111011", R, "mulw", gen_arithmetic_w!(wrapping_mul)),
+        make_pattern("0000001 ????? ????? 100 ????? 0111011", R, "divw", gen_arithmetic_w!(wrapping_div)),
+        make_pattern("0000001 ????? ????? 110 ????? 0111011", R, "remw", gen_arithmetic_w!(wrapping_rem)),
 
         // bit op
         make_pattern("0000000 ????? ????? 111 ????? 0110011", R, "and", gen_bit_op!(&)),
@@ -306,36 +295,66 @@ pub fn init_patterns() -> Vec<Pattern> {
         make_pattern("??????? ????? ????? 111 ????? 0010011", I, "andi", gen_bit_op_imm!(&)),
         make_pattern("??????? ????? ????? 110 ????? 0010011", I, "ori", gen_bit_op_imm!(|)),
         make_pattern("??????? ????? ????? 100 ????? 0010011", I, "xori", gen_bit_op_imm!(^)),
+        // TODO: revisit w insts, some truncate32 to reg still needed!
         make_pattern(
-            "0000000 ????? ????? 001 ????? 0010011", I, "slli",
+            "000000 ?????? ????? 001 ????? 0010011", I, "slli",
             |inst, state| {
-                state.regs[inst.rd as u8] = inst.src1(state) << (inst.imm & 0b11111);
+                state.regs[inst.rd] = inst.src1(state) << (inst.imm & 0b111111);
             },
         ),
         make_pattern(
-            "0000000 ????? ????? 001 ????? 0111011", I, "sllw",
+            "000000 ?????? ????? 101 ????? 0010011", I, "srli",
             |inst, state| {
-                state.regs[inst.rd as u8] = truncate_32(inst.src1(state) << (inst.src2(state) & 0b11111)) as u64;
+                state.regs[inst.rd] = inst.src1(state) >> (inst.imm & 0b111111);
             },
         ),
         make_pattern(
-            "0100000 ????? ????? 101 ????? 0010011", I, "srai",
+            "010000 ?????? ????? 101 ????? 0010011", I, "srai",
             |inst, state| {
-                state.regs[inst.rd as u8] = (inst.src1(state) as i64 >> (inst.imm & 0b11111)) as u64;
+                state.regs[inst.rd] = (inst.src1(state) as i64 >> (inst.imm & 0b111111)) as u64;
+            },
+        ),
+        make_pattern(
+            "0000000 ????? ????? 001 ????? 0111011", R, "sllw",
+            |inst, state| {
+                state.regs[inst.rd] = sign_extend64(truncate_32(inst.src1(state) << (inst.src2(state) & 0b11111)), 32);
+            },
+        ),
+        make_pattern(
+            "0000000 ????? ????? 101 ????? 0111011", R, "srlw",
+            |inst, state| {
+                state.regs[inst.rd] = truncate_32(truncate_32(inst.src1(state)) >> (inst.src2(state) & 0b11111));
+            },
+        ),
+        make_pattern(
+            "0100000 ????? ????? 101 ????? 0111011", R, "sraw",
+            |inst, state| {
+                state.regs[inst.rd] = sign_extend64(truncate_32((inst.src1(state) as i64 >> (inst.src2(state) & 0b11111)) as u64), 32);
+            },
+        ),
+        make_pattern(
+            "0000000 ????? ????? 001 ????? 0011011", I, "slliw",
+            |inst, state| {
+                state.regs[inst.rd] = sign_extend64(truncate_32(inst.src1(state) << (inst.imm & 0b11111)), 32);
             },
         ),
         make_pattern(
             "0000000 ????? ????? 101 ????? 0011011", I, "srliw",
             |inst, state| {
-                state.regs[inst.rd as u8] = truncate_32(inst.src1(state)) >> (inst.imm & 0b11111);
+                state.regs[inst.rd] = sign_extend64(truncate_32(inst.src1(state)) >> (inst.imm & 0b11111), 32);
             },
         ),
-
+        make_pattern(
+            "010000 ?????? ????? 101 ????? 0011011", I, "sraiw",
+            |inst, state| {
+                state.regs[inst.rd] = sign_extend64(truncate_32((inst.src1(state) as i64 >> (inst.imm & 0b111111)) as u64), 32);
+            },
+        ),
         // branch
         make_pattern("??????? ????? ????? 000 ????? 1100011", B, "beq", gen_branch_u!(==)),
         make_pattern("??????? ????? ????? 001 ????? 1100011", B, "bne", gen_branch_u!(!=)),
-        make_pattern("??????? ????? ????? 101 ????? 1100011", B, "bge", gen_branch!(>)),
-        make_pattern("??????? ????? ????? 111 ????? 1100011", B, "bgeu", gen_branch_u!(>)),
+        make_pattern("??????? ????? ????? 101 ????? 1100011", B, "bge", gen_branch!(>=)),
+        make_pattern("??????? ????? ????? 111 ????? 1100011", B, "bgeu", gen_branch_u!(>=)),
         make_pattern("??????? ????? ????? 100 ????? 1100011", B, "blt", gen_branch!(<)),
         make_pattern("??????? ????? ????? 110 ????? 1100011", B, "bltu", gen_branch_u!(<)),
         make_pattern(
@@ -343,7 +362,7 @@ pub fn init_patterns() -> Vec<Pattern> {
             J,
             "jal",
             |inst, state| {
-                state.regs[inst.rd as u8] = state.pc.value() + 4;
+                state.regs[inst.rd] = state.pc.value() + 4;
                 state.dyn_pc = Some(VAddr::new(state.pc.value().wrapping_add(inst.imm)));
             },
         ),
@@ -352,7 +371,7 @@ pub fn init_patterns() -> Vec<Pattern> {
             I,
             "jalr",
             |inst, state| {
-                state.regs[inst.rd as u8] = state.pc.value() + 4;
+                state.regs[inst.rd] = state.pc.value() + 4;
                 state.dyn_pc = Some(VAddr::new(inst.src1(state).wrapping_add(inst.imm)));
             },
         ),
@@ -361,13 +380,13 @@ pub fn init_patterns() -> Vec<Pattern> {
         make_pattern(
             "0000000 ????? ????? 011 ????? 0110011", R, "sltu",
             |inst, state| {
-                state.regs[inst.rd as u8] = if inst.src1(state) < inst.src2(state) { 1 } else { 0 }
+                state.regs[inst.rd] = if inst.src1(state) < inst.src2(state) { 1 } else { 0 }
             },
         ),
         make_pattern(
             "??????? ????? ????? 011 ????? 0010011", I, "sltiu",
             |inst, state| {
-                state.regs[inst.rd as u8] = if inst.src1(state) < inst.imm { 1 } else { 0 }
+                state.regs[inst.rd] = if inst.src1(state) < inst.imm { 1 } else { 0 }
             },
         ),
 
@@ -375,7 +394,7 @@ pub fn init_patterns() -> Vec<Pattern> {
         make_pattern(
             "??????? ????? ????? ??? ????? 0010111", U, "auipc",
             |inst, state| {
-                state.regs[inst.rd as u8] = (state.pc.value() + inst.imm) as Reg;
+                state.regs[inst.rd] = (state.pc.value() + inst.imm) as Reg;
             },
         ),
         make_pattern(
@@ -408,7 +427,7 @@ mod tests {
     #[test]
     fn it_works() {
         // let pat = make_pattern("??????? ????? ????? 100 ????? 00000 11", I, "lbu", |inst, state| {
-        //     state.regs[inst.rd as u8] = state.memory.borrow().read(&VAddr::new((inst.imm + inst.src1(state))), Byte);
+        //     state.regs[inst.rd] = state.memory.borrow().read(&VAddr::new((inst.imm + inst.src1(state))), Byte);
         // });
         // println!("mask:{:x} key:{:x}", pat.mask, pat.key);
         // assert!(pat.match_inst(&0x0102c503u64));
@@ -416,14 +435,15 @@ mod tests {
         // println!("{}", test!(^));
         // println!("{}", test!(+));
         let pat = init_patterns();
-        let pat_map = HashMap::<&str, Pattern>::new();
+        let mut pat_map = HashMap::<&str, Pattern>::new();
         for p in pat {
-            if p.match_inst(&0x00279793u64) {
+            if p.match_inst(&0x03079793u64) {
                 println!("{}", p._name);
             }
-            // pat_map.insert(p._name, p);
+            pat_map.insert(p._name, p);
         }
-        pat_map["srliw"].match_inst(&0x0017d69bu64);
+        // pat_map["srliw"].match_inst(&0x0017d69bu64);
+        pat_map["slli"].match_inst(&0x3079793u64);
         // if p.match_inst(&0x0017d69bu64) {
         //     println!("{}", p._name);
         // }
