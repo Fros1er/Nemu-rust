@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::ops::{DerefMut};
 use std::process::ExitCode;
 use std::rc::Rc;
+use log::info;
 use crate::monitor::sdb::difftest_qemu::DifftestContext;
 
 mod device;
@@ -22,7 +23,7 @@ mod utils;
 pub struct Emulator<T: Isa> {
     cpu: T,
     memory: Rc<RefCell<Memory>>,
-    _device: Devices,
+    device: Devices,
     difftest_ctx: Option<DifftestContext>,
     batch: bool
 }
@@ -43,7 +44,7 @@ impl<T: Isa> Emulator<T> {
         Emulator {
             cpu,
             memory,
-            _device: device,
+            device,
             difftest_ctx,
             batch: args.batch
         }
@@ -63,7 +64,7 @@ impl<T: Isa> Emulator<T> {
             }
             inst_count
         };
-        println!("Instruction executed: {}", cnt);
+        info!("Instruction executed: {}", cnt);
     }
 
     pub fn exit(&mut self) {

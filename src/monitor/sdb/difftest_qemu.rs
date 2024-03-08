@@ -1,4 +1,5 @@
 use cfg_if::cfg_if;
+use log::info;
 
 cfg_if! {
     if #[cfg(feature="difftest")] {
@@ -43,7 +44,7 @@ impl DifftestContext {
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .spawn().unwrap();
-                println!("Difftest enabled. qemu spawned with pid {}.", qemu_proc.id());
+                info!("Difftest enabled. qemu spawned with pid {}.", qemu_proc.id());
                 thread::sleep(time::Duration::from_millis(200));
                 let mut gdb_ctx = GdbContext::new();
                 gdb_ctx.continue_to_addr(_info.reset_vec);

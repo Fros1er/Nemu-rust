@@ -14,7 +14,6 @@ use log::{error, info, trace};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::str::FromStr;
-use chumsky::chain::Chain;
 use strum::IntoEnumIterator;
 use crate::isa::riscv64::reg::RegName::{a0, a1, a2, t0};
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
@@ -82,11 +81,11 @@ impl Isa for RISCV64 {
     }
     fn isa_reg_display(&self) {
         for reg in RegName::iter() {
-            println!("{:?}: {:#x}", reg, self.state.regs[reg.clone()]);
+            info!("{:?}: {:#x}", reg, self.state.regs[reg.clone()]);
         }
-        println!("pc: {:#x}", self.state.pc.value());
+        info!("pc: {:#x}", self.state.pc.value());
         for reg in CSRName::iter() {
-            println!("{:?}: {:#x}", reg, self.state.csrs[reg]);
+            info!("{:?}: {:#x}", reg, self.state.csrs[reg]);
         }
     }
 

@@ -9,9 +9,10 @@ use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::collections::HashMap;
 use cfg_if::cfg_if;
+use log::{error, info};
 
 fn unknown_sdb_command(cmd: &str) {
-    println!(
+    error!(
         "Unknown command: {}",
         cmd.split_once(' ').unwrap_or((cmd, "")).0
     );
@@ -36,8 +37,10 @@ pub fn exec_once<T: Isa>(
             }
         }
     }
-
+    emulator.device.update();
     let not_halt = emulator.cpu.isa_exec_once();
+
+
     let mut pause = false;
 
     cfg_if! {
@@ -46,10 +49,10 @@ pub fn exec_once<T: Isa>(
                 let difftest_regs = emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.read_regs_64();
                 let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
                 if difftest_res.is_err() {
-                    println!("{}", difftest_res.err().unwrap());
+                    info!("{}", difftest_res.err().unwrap());
                     return (false, false);
                 }
-                println!("identical at pc {:#x}, {} inst in total", emulator.cpu.isa_get_pc(), _inst_count);
+                info!("identical at pc {:#x}, {} inst in total", emulator.cpu.isa_get_pc(), _inst_count);
             }
         }
     }
@@ -59,19 +62,19 @@ pub fn exec_once<T: Isa>(
         if eval_res != Ok(watchpoint.prev_val) {
             match eval_res {
                 Ok(res) => {
-                    println!("Watchpoint {}: {}", idx, watchpoint.expr_str);
-                    println!("Old value = {}", watchpoint.prev_val);
-                    println!("New value = {}", res);
+                    info!("Watchpoint {}: {}", idx, watchpoint.expr_str);
+                    info!("Old value = {}", watchpoint.prev_val);
+                    info!("New value = {}", res);
                     watchpoint.prev_val = res;
                 }
-                Err(err) => println!("{}", err),
+                Err(err) => info!("{}", err),
             }
             pause = true;
         }
     }
     for (idx, breakpoint) in breakpoints.iter() {
         if emulator.cpu.isa_get_pc() == *breakpoint {
-            println!("Breakpoint {}: {}", idx, breakpoint);
+            info!("Breakpoint {}: {}", idx, breakpoint);
             pause = true;
             break;
         }
@@ -97,15 +100,15 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> i32 {
                 match line.trim_start().as_bytes()[0] as char {
                     'h' => {
                         if line.starts_with("help") {
-                            println!("help: Display information about all supported commands");
-                            println!("c: Continue the execution of the program");
-                            println!("s: step once");
-                            println!("i: display reg");
-                            println!("p expr: eval(expr)");
-                            println!("w expr: set watchpoint expr");
-                            println!("b addr: set breakpoint addr");
-                            println!("d N: del watchpoint N");
-                            println!("q: Exit");
+                            info!("help: Display information about all supported commands");
+                            info!("c: Continue the execution of the program");
+                            info!("s: step once");
+                            info!("i: display reg");
+                            info!("p expr: eval(expr)");
+                            info!("w expr: set watchpoint expr");
+                            info!("b addr: set breakpoint addr");
+                            info!("d N: del watchpoint N");
+                            info!("q: Exit");
                         } else {
                             unknown_sdb_command(line.as_str());
                         }
@@ -131,8 +134,8 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> i32 {
                     'i' => emulator.cpu.isa_reg_display(), // info r(reg) / info w(watchpoint)
                     'x' => {}                              // x N expr: mem[eval(expr)..N*4]
                     'p' => match eval(&line[1..], emulator) {
-                        Ok(val) => println!("result: {}", val),
-                        Err(err) => println!("{}", err),
+                        Ok(val) => info!("result: {}", val),
+                        Err(err) => info!("{}", err),
                     }, // p expr: eval(expr)
                     'w' => {
                         let raw_expr = line[1..].trim();
@@ -147,46 +150,46 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> i32 {
                         match watchpoint {
                             Ok(watchpoint) => {
                                 watchpoints.insert(next_watchpoint_idx, watchpoint);
-                                println!("watchpoint {}: {}", next_watchpoint_idx, raw_expr);
+                                info!("watchpoint {}: {}", next_watchpoint_idx, raw_expr);
                                 next_watchpoint_idx += 1;
                             }
-                            Err(err) => println!("{}", err),
+                            Err(err) => info!("{}", err),
                         }
                     } // w expr: pause when mem[eval(expr)] changes
                     'b' => {
                         match u64::from_str_radix(line[1..].trim(), 16) {
                             Ok(addr) => {
                                 breakpoints.insert(next_breakpoint_idx, addr);
-                                println!("breakpoint {}: {}", next_breakpoint_idx, addr);
+                                info!("breakpoint {}: {}", next_breakpoint_idx, addr);
                                 next_breakpoint_idx += 1;
                             }
-                            Err(err) => println!("{}", err)
+                            Err(err) => info!("{}", err)
                         }
                     }
                     'd' => match line[1..].parse::<u32>() {
                         Ok(num) => match watchpoints.remove(&num) {
-                            Some(watchpoint) => println!(
+                            Some(watchpoint) => info!(
                                 "Watchpoint number {} deleted, expr: {}",
                                 num, watchpoint.expr_str
                             ),
-                            None => println!("No watchpoint number {}", num),
+                            None => info!("No watchpoint number {}", num),
                         },
-                        Err(err) => println!("{}", err),
+                        Err(err) => info!("{}", err),
                     }, // d N: delete watchpoint N
 
                     _ => unknown_sdb_command(line.as_str()),
                 }
             }
             Err(ReadlineError::Interrupted) => {
-                println!("CTRL-C");
+                info!("CTRL-C");
                 break;
             }
             Err(ReadlineError::Eof) => {
-                println!("CTRL-D");
+                info!("CTRL-D");
                 break;
             }
             Err(err) => {
-                println!("Readline Error: {:?}", err);
+                info!("Readline Error: {:?}", err);
                 break;
             }
         }

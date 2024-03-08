@@ -1,9 +1,9 @@
 use std::ptr::addr_of_mut;
 use sdl2::keyboard::Keycode;
 use crate::device::Device;
-use crate::device_impl_iomap;
 use crate::memory::IOMap;
 use crate::memory::paddr::PAddr;
+use crate::memory::vaddr::MemOperationSize;
 
 pub const KEYBOARD_MMIO_START: PAddr = PAddr::new(0xa0000060);
 
@@ -32,11 +32,15 @@ impl Keyboard {
 }
 
 impl Device for Keyboard {
-    fn update(&mut self, dirty: bool) {
-        if dirty {
-            panic!("Can't write to keyboard mem")
-        }
-    }
+    fn update(&mut self) {}
 }
 
-device_impl_iomap!(Keyboard);
+impl IOMap for Keyboard {
+    fn data(&self) -> &[u8] {
+        &self.mem
+    }
+
+    fn write(&mut self, _offset: usize, _data: u64, _size: MemOperationSize) {
+        panic!("Write to keyboard is not allowed")
+    }
+}
