@@ -29,7 +29,7 @@ pub struct Devices {
     event_pump: EventPump,
     // vga: Rc<RefCell<VGA>>,
     keyboard: Rc<RefCell<Keyboard>>,
-    timer: Rc<RefCell<Timer>>,
+    // timer: Rc<RefCell<Timer>>,
     devices: Vec<Rc<RefCell<dyn Device>>>,
 
     device_need_update: Arc<AtomicBool>,
@@ -41,21 +41,21 @@ impl Devices {
     pub fn new(memory: &mut Memory) -> Self {
         let sdl_context = sdl2::init().unwrap();
 
+        let device_need_update = Arc::new(AtomicBool::new(false));
+        let device_need_update_t = device_need_update.clone();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stopped_t = stopped.clone();
+
         let (vga_ctrl, vga) = VGA::new(&sdl_context);
         let vga_ctrl = Rc::new(RefCell::new(vga_ctrl));
         let keyboard = Rc::new(RefCell::new(Keyboard::new()));
         let serial = Rc::new(RefCell::new(Serial::new()));
-        let timer = Rc::new(RefCell::new(Timer::new()));
+        let timer = Rc::new(RefCell::new(Timer::new(stopped.clone())));
         memory.add_mmio(VGA_FRAME_BUF_MMIO_START, vga.clone());
         memory.add_mmio(VGA_CTL_MMIO_START, vga_ctrl.clone());
         memory.add_mmio(KEYBOARD_MMIO_START, keyboard.clone());
         memory.add_mmio(SERIAL_MMIO_START, serial.clone());
         memory.add_mmio(TIMER_MMIO_START, timer.clone());
-
-        let device_need_update = Arc::new(AtomicBool::new(false));
-        let device_need_update_t = device_need_update.clone();
-        let stopped = Arc::new(AtomicBool::new(false));
-        let stopped_t = stopped.clone();
 
         let update_delay_thread = thread::spawn(move || {
             while !stopped_t.load(Relaxed) {
@@ -69,7 +69,7 @@ impl Devices {
             devices: vec![vga_ctrl, keyboard.clone(), serial],
             // vga,
             keyboard,
-            timer,
+            // timer,
             device_need_update,
             stopped,
             update_delay_thread,
@@ -77,15 +77,14 @@ impl Devices {
     }
 
     pub fn update(&mut self) -> bool {
-        self.timer.borrow_mut().update();
         if !self.device_need_update.load(Acquire) {
-            return true;
+            return false;
         }
         self.device_need_update.store(false, Release);
         for event in self.event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => {
-                    return false;
+                    return true;
                 }
                 Event::KeyDown { keycode, .. } => {
                     self.keyboard.borrow_mut().send_key(keycode.unwrap(), true);
@@ -100,7 +99,7 @@ impl Devices {
             device.borrow_mut().update()
         }
 
-        true
+        false
     }
 
     pub fn stop(self) {

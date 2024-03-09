@@ -281,7 +281,6 @@ macro_rules! gen_arithmetic_uw {
 
 pub fn init_patterns() -> Vec<Pattern> {
     vec![
-
         // memory
         make_pattern("??????? ????? ????? 000 ????? 0000011", I, "lb", gen_load!(Byte)),
         make_pattern("??????? ????? ????? 100 ????? 0000011", I, "lbu", gen_load_u!(Byte)),
@@ -320,6 +319,7 @@ pub fn init_patterns() -> Vec<Pattern> {
         make_pattern("0000001 ????? ????? 100 ????? 0110011", R, "div", gen_arithmetic!(wrapping_div)),
         make_pattern("0000001 ????? ????? 101 ????? 0110011", R, "divu", gen_arithmetic_u!(wrapping_div)),
         make_pattern("0000001 ????? ????? 110 ????? 0110011", R, "rem", gen_arithmetic!(wrapping_rem)),
+        make_pattern("0000001 ????? ????? 111 ????? 0110011", R, "remu", gen_arithmetic_u!(wrapping_rem)),
         make_pattern("0000000 ????? ????? 000 ????? 0111011", R, "addw", gen_arithmetic_w!(wrapping_add)),
         make_pattern("0100000 ????? ????? 000 ????? 0111011", R, "subw", gen_arithmetic_w!(wrapping_sub)),
         make_pattern("0000001 ????? ????? 000 ????? 0111011", R, "mulw", gen_arithmetic_w!(wrapping_mul)),
@@ -337,6 +337,18 @@ pub fn init_patterns() -> Vec<Pattern> {
         make_pattern("??????? ????? ????? 100 ????? 0010011", I, "xori", gen_bit_op_imm!(^)),
         // TODO: revisit w insts, some truncate32 to reg still needed!
 
+        make_pattern(
+            "0000000 ????? ????? 001 ????? 0110011", R, "sll",
+            |inst, state| {
+                state.regs[inst.rd] = inst.src1(state) << (inst.src2(state) & 0b111111);
+            },
+        ),
+        make_pattern(
+            "0000000 ????? ????? 101 ????? 0110011", R, "srl",
+            |inst, state| {
+                state.regs[inst.rd] = inst.src1(state) >> (inst.src2(state) & 0b111111);
+            },
+        ),
         make_pattern(
             "000000 ?????? ????? 001 ????? 0010011", I, "slli",
             |inst, state| {
@@ -419,9 +431,21 @@ pub fn init_patterns() -> Vec<Pattern> {
 
         // set
         make_pattern(
+            "0000000 ????? ????? 010 ????? 0110011", R, "slt",
+            |inst, state| {
+                state.regs[inst.rd] = if inst.src1_i64(state) < inst.src2_i64(state) { 1 } else { 0 }
+            },
+        ),
+        make_pattern(
             "0000000 ????? ????? 011 ????? 0110011", R, "sltu",
             |inst, state| {
                 state.regs[inst.rd] = if inst.src1(state) < inst.src2(state) { 1 } else { 0 }
+            },
+        ),
+        make_pattern(
+            "??????? ????? ????? 010 ????? 0010011", I, "slti",
+            |inst, state| {
+                state.regs[inst.rd] = if inst.src1_i64(state) < inst.imm as i64 { 1 } else { 0 }
             },
         ),
         make_pattern(

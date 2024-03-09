@@ -10,10 +10,13 @@ pub mod paddr;
 pub mod vaddr;
 
 pub trait IOMap {
-    fn data(&self) -> &[u8];
+    fn data_for_default_read(&self) -> &[u8];
+    fn len(&self) -> usize {
+        self.data_for_default_read().len()
+    }
 
     fn read(&self, offset: usize, len: MemOperationSize) -> u64 {
-        len.read_sized(addr_of!(self.data()[offset]))
+        len.read_sized(addr_of!(self.data_for_default_read()[offset]))
     }
 
     // guarantee ofs is inside self.mem
@@ -79,7 +82,7 @@ impl Memory {
     }
 
     pub fn add_mmio(&mut self, left: PAddr, device: Rc<RefCell<dyn IOMap>>) {
-        let right = left.clone() + device.borrow().data().len() as u64;
+        let right = left.clone() + device.borrow().len() as u64;
         let io_map = IOMapEntry::new(left, right, device);
         if Self::in_pmem(&io_map.left) && Self::in_pmem(&io_map.right) {
             panic!("MMIO region ({:#x}, {:#x}) overlaps with pmem", io_map.left, io_map.right)

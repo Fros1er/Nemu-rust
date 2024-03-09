@@ -25,7 +25,8 @@ pub struct Emulator<T: Isa> {
     memory: Rc<RefCell<Memory>>,
     device: Devices,
     difftest_ctx: Option<DifftestContext>,
-    batch: bool
+    batch: bool,
+    exitcode: u8
 }
 
 impl<T: Isa> Emulator<T> {
@@ -46,19 +47,26 @@ impl<T: Isa> Emulator<T> {
             memory,
             device,
             difftest_ctx,
-            batch: args.batch
+            batch: args.batch,
+            exitcode: 0
         }
     }
 
     pub fn run(&mut self) {
         let cnt = if !self.batch {
-            sdb_loop(self)
+            let (inst_cont, exitcode) = sdb_loop(self);
+            self.exitcode = exitcode;
+            inst_cont
         } else {
             let mut inst_count= 0;
             loop {
                inst_count += 1;
-                let (not_halt, _) = exec_once(self, &mut HashMap::new(), &HashMap::new(), inst_count);
+                let (not_halt, _, sdl_quit) = exec_once(self, &mut HashMap::new(), &HashMap::new(), inst_count);
                 if !not_halt {
+                    self.exitcode = self.cpu.isa_get_exit_code();
+                    break;
+                }
+                if sdl_quit {
                     break;
                 }
             }
@@ -72,7 +80,7 @@ impl<T: Isa> Emulator<T> {
             ctx.exit();
         }
         self.device.stop();
-        ExitCode::from(self.cpu.isa_get_exit_code())
+        ExitCode::from(self.exitcode)
     }
 }
 

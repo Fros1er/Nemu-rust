@@ -9,10 +9,10 @@ use crate::device::Device;
 use crate::memory::IOMap;
 use crate::memory::paddr::PAddr;
 use crate::memory::vaddr::MemOperationSize;
-use crate::memory::vaddr::MemOperationSize::DWORD;
+use crate::memory::vaddr::MemOperationSize::{DWORD, WORD};
 
-const SCREEN_W: u32 = 600;
-const SCREEN_H: u32 = 400;
+const SCREEN_W: u32 = 400;
+const SCREEN_H: u32 = 300;
 pub const VGA_FRAME_BUF_MMIO_START: PAddr = PAddr::new(0xa1000000);
 pub const VGA_CTL_MMIO_START: PAddr = PAddr::new(0xa0000100);
 
@@ -48,10 +48,12 @@ impl VGA {
             mem: vec![0u8; (SCREEN_W * SCREEN_H * 4) as usize].into_boxed_slice(),
         };
         let vga = Rc::new(RefCell::new(vga));
-        let vga_ctrl = VGAControl {
+        let mut vga_ctrl = VGAControl {
             vga: vga.clone(),
             mem: [0u8; 8],
         };
+        WORD.write_sized(SCREEN_W as u64, addr_of_mut!(vga_ctrl.mem[0]));
+        WORD.write_sized(SCREEN_H as u64, addr_of_mut!(vga_ctrl.mem[2]));
         (vga_ctrl, vga)
     }
 
@@ -72,7 +74,7 @@ impl Device for VGAControl {
 }
 
 impl IOMap for VGAControl {
-    fn data(&self) -> &[u8] {
+    fn data_for_default_read(&self) -> &[u8] {
         &self.mem
     }
 
@@ -92,7 +94,7 @@ impl IOMap for VGAControl {
 }
 
 impl IOMap for VGA {
-    fn data(&self) -> &[u8] {
+    fn data_for_default_read(&self) -> &[u8] {
         &self.mem
     }
 

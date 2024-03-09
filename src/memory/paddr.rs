@@ -17,7 +17,11 @@ impl PAddr {
         Self(addr)
     }
     pub fn to_host_arr_index(&self) -> usize {
-        (self.0 - CONFIG_MBASE.0) as usize
+        let res = (self.0 - CONFIG_MBASE.0) as usize;
+        if res > CONFIG_MSIZE as usize {
+            panic!("paddr not in pmem: {:#x}", self);
+        }
+        res
     }
     pub fn value(&self) -> u64 {
         self.0

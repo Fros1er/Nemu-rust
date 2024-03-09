@@ -21,7 +21,6 @@ Cargo.lock
 .idea
 am-kernels/
 tests/
-abstract-machine/
 *.svg
 *.data
 *.data.old

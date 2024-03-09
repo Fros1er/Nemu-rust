@@ -29,7 +29,7 @@ pub fn exec_once<T: Isa>(
     watchpoints: &mut HashMap<u32, WatchPoint>,
     breakpoints: &HashMap<u32, u64>,
     _inst_count: i32,
-) -> (bool, bool) {
+) -> (bool, bool, bool) {
     cfg_if! {
         if #[cfg(feature="difftest")] {
             if emulator.difftest_ctx.is_some() {
@@ -37,7 +37,7 @@ pub fn exec_once<T: Isa>(
             }
         }
     }
-    let sdl_not_quit = emulator.device.update();
+    let sdl_quit = emulator.device.update();
     let not_halt = emulator.cpu.isa_exec_once();
 
 
@@ -50,7 +50,7 @@ pub fn exec_once<T: Isa>(
                 let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
                 if difftest_res.is_err() {
                     info!("{}", difftest_res.err().unwrap());
-                    return (false, false);
+                    return (false, false, false);
                 }
                 info!("identical at pc {:#x}, {} inst in total", emulator.cpu.isa_get_pc(), _inst_count);
             }
@@ -79,10 +79,10 @@ pub fn exec_once<T: Isa>(
             break;
         }
     }
-    (sdl_not_quit && not_halt, pause)
+    (not_halt, pause, sdl_quit)
 }
 
-pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> i32 {
+pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (i32, u8) {
     let mut rl = DefaultEditor::new().unwrap();
     let mut watchpoints: HashMap<u32, WatchPoint> = HashMap::new();
     let mut breakpoints: HashMap<u32, u64> = HashMap::new();
@@ -115,20 +115,27 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> i32 {
                     }
                     'c' => loop {
                         inst_count += 1;
-                        let (not_halt, wp_matched) = exec_once(emulator, &mut watchpoints, &breakpoints, inst_count);
+                        let (not_halt, wp_matched, sdl_quit) = exec_once(emulator, &mut watchpoints, &breakpoints, inst_count);
                         if !not_halt {
-                            return inst_count;
+                            return (inst_count, emulator.cpu.isa_get_exit_code());
+                        }
+                        if sdl_quit {
+                            return (inst_count, 0);
                         }
                         if wp_matched {
                             break;
                         }
                     },
-                    'q' => return inst_count,
+                    'q' => return (inst_count, 0),
                     's' => {
                         // si
                         inst_count += 1;
-                        if !exec_once(emulator, &mut watchpoints, &breakpoints, inst_count).0 {
-                            return inst_count;
+                        let (not_halt, _, sdl_quit) = exec_once(emulator, &mut watchpoints, &breakpoints, inst_count);
+                        if !not_halt {
+                            return (inst_count, emulator.cpu.isa_get_exit_code());
+                        }
+                        if sdl_quit {
+                            return (inst_count, 0);
                         }
                     }
                     'i' => emulator.cpu.isa_reg_display(), // info r(reg) / info w(watchpoint)
@@ -194,5 +201,5 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> i32 {
             }
         }
     }
-    inst_count
+    (inst_count, 0)
 }

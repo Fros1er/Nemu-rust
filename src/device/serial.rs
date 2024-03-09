@@ -23,7 +23,7 @@ impl Device for Serial {
 }
 
 impl IOMap for Serial {
-    fn data(&self) -> &[u8] {
+    fn data_for_default_read(&self) -> &[u8] {
         &self.mem
     }
 

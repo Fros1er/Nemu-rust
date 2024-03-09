@@ -1,46 +1,58 @@
-use std::ptr::{addr_of, addr_of_mut};
-use std::time::SystemTime;
+use std::ptr::addr_of;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+use std::thread;
+use std::time::{Duration, SystemTime};
 
-use crate::device::Device;
 use crate::memory::IOMap;
 use crate::memory::paddr::PAddr;
 use crate::memory::vaddr::MemOperationSize;
-use crate::memory::vaddr::MemOperationSize::QWORD;
 
 pub const TIMER_MMIO_START: PAddr = PAddr::new(0xa0000048);
 
 pub struct Timer {
-    // queue: VecDeque<i32>,
-    boot_time: SystemTime,
-    mem: [u8; 8],
+    mem: Arc<AtomicU64>,
+    // update_thread: JoinHandle<()>
 }
 
 impl Timer {
-    pub fn new() -> Self {
-        Self {
-            boot_time: SystemTime::now(),
-            mem: [0; 8],
-        }
-    }
-}
+    pub fn new(stopped: Arc<AtomicBool>) -> Self {
+        let mem = Arc::new(AtomicU64::new(0));
+        let mem_t = mem.clone();
 
-impl Device for Timer {
-    fn update(&mut self) {
-        if let Ok(now) = SystemTime::now().duration_since(self.boot_time) {
-            let us = now.as_micros() as u64;
-            QWORD.write_sized(us, addr_of_mut!(self.mem[0]))
+        thread::spawn(move || {
+            let boot_time = SystemTime::now();
+            while !stopped.load(Relaxed) {
+                if let Ok(now) = SystemTime::now().duration_since(boot_time) {
+                    let us = now.as_micros() as u64;
+                    mem_t.store(us, Release);
+                }
+                thread::sleep(Duration::from_micros(1));
+            }
+        });
+
+        Self {
+            // boot_time: SystemTime::now(),
+            mem,
+            // update_thread
         }
     }
 }
 
 impl IOMap for Timer {
-    fn data(&self) -> &[u8] {
-        &self.mem
+    fn data_for_default_read(&self) -> &[u8] {
+        // &self.mem
+        panic!("No default read for timer")
+    }
+
+    fn len(&self) -> usize {
+        8
     }
 
     fn read(&self, offset: usize, len: MemOperationSize) -> u64 {
-        let res = len.read_sized(addr_of!(self.data()[offset]));
-        // info!("read time: {}", res);
+        let time = self.mem.load(Acquire);
+        let res = len.read_sized(unsafe { (addr_of!(time) as *const u8).offset(offset as isize) });
         res
     }
 
