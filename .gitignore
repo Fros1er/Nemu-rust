@@ -22,3 +22,6 @@ Cargo.lock
 am-kernels/
 tests/
 abstract-machine/
+*.svg
+*.data
+*.data.old

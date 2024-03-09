@@ -67,13 +67,11 @@ impl<T: Isa> Emulator<T> {
         info!("Instruction executed: {}", cnt);
     }
 
-    pub fn exit(&mut self) {
+    pub fn exit(mut self) -> ExitCode {
         if let Some(ctx) = &mut self.difftest_ctx {
             ctx.exit();
         }
-    }
-
-    pub fn get_exit_status(&self) -> ExitCode {
+        self.device.stop();
         ExitCode::from(self.cpu.isa_get_exit_code())
     }
 }
@@ -81,6 +79,5 @@ impl<T: Isa> Emulator<T> {
 fn main() -> ExitCode {
     let mut emulator = Emulator::<RISCV64>::new();
     emulator.run();
-    emulator.exit();
-    emulator.get_exit_status()
+    emulator.exit()
 }

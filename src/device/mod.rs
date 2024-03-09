@@ -1,6 +1,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+use std::thread;
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use sdl2::event::Event;
 use sdl2::EventPump;
@@ -8,7 +13,7 @@ use sdl2::EventPump;
 use crate::device::keyboard::{Keyboard, KEYBOARD_MMIO_START};
 use crate::device::serial::{Serial, SERIAL_MMIO_START};
 use crate::device::timer::{Timer, TIMER_MMIO_START};
-use crate::device::vga::{VGA, VGA_FRAME_BUF_MMIO_START, VGA_CTL_MMIO_START};
+use crate::device::vga::{VGA, VGA_CTL_MMIO_START, VGA_FRAME_BUF_MMIO_START};
 use crate::memory::Memory;
 
 mod keyboard;
@@ -26,7 +31,10 @@ pub struct Devices {
     keyboard: Rc<RefCell<Keyboard>>,
     timer: Rc<RefCell<Timer>>,
     devices: Vec<Rc<RefCell<dyn Device>>>,
-    last_update: Instant,
+
+    device_need_update: Arc<AtomicBool>,
+    stopped: Arc<AtomicBool>,
+    update_delay_thread: JoinHandle<()>,
 }
 
 impl Devices {
@@ -43,27 +51,41 @@ impl Devices {
         memory.add_mmio(KEYBOARD_MMIO_START, keyboard.clone());
         memory.add_mmio(SERIAL_MMIO_START, serial.clone());
         memory.add_mmio(TIMER_MMIO_START, timer.clone());
+
+        let device_need_update = Arc::new(AtomicBool::new(false));
+        let device_need_update_t = device_need_update.clone();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stopped_t = stopped.clone();
+
+        let update_delay_thread = thread::spawn(move || {
+            while !stopped_t.load(Relaxed) {
+                device_need_update_t.store(true, Release);
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+
         Self {
             event_pump: sdl_context.event_pump().unwrap(),
             devices: vec![vga_ctrl, keyboard.clone(), serial],
             // vga,
             keyboard,
             timer,
-            last_update: Instant::now(),
+            device_need_update,
+            stopped,
+            update_delay_thread,
         }
     }
 
     pub fn update(&mut self) -> bool {
         self.timer.borrow_mut().update();
-        let now = Instant::now();
-        if now.duration_since(self.last_update) < Duration::from_millis(10) {
-            return false;
+        if !self.device_need_update.load(Acquire) {
+            return true;
         }
-        self.last_update = now;
+        self.device_need_update.store(false, Release);
         for event in self.event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => {
-                    return true;
+                    return false;
                 }
                 Event::KeyDown { keycode, .. } => {
                     self.keyboard.borrow_mut().send_key(keycode.unwrap(), true);
@@ -77,6 +99,12 @@ impl Devices {
         for device in &self.devices {
             device.borrow_mut().update()
         }
-        false
+
+        true
+    }
+
+    pub fn stop(self) {
+        self.stopped.store(true, Relaxed);
+        self.update_delay_thread.join().unwrap();
     }
 }

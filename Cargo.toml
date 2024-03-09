@@ -23,3 +23,7 @@ chumsky = "0.9.3"
 llvm-sys = "140.0"
 cfg-if = "1.0"
 sdl2 = { version = "0.36", features = ["unsafe_textures"] }
+
+[profile.release]
+debug = true
+strip = false

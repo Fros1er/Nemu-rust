@@ -37,7 +37,7 @@ pub fn exec_once<T: Isa>(
             }
         }
     }
-    emulator.device.update();
+    let sdl_not_quit = emulator.device.update();
     let not_halt = emulator.cpu.isa_exec_once();
 
 
@@ -79,7 +79,7 @@ pub fn exec_once<T: Isa>(
             break;
         }
     }
-    (not_halt, pause)
+    (sdl_not_quit && not_halt, pause)
 }
 
 pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> i32 {
