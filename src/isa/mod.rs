@@ -19,6 +19,10 @@ pub trait Isa {
     fn isa_exec_once(&mut self) -> bool;
 
     fn isa_get_exit_code(&self) -> u8;
+
+    fn isa_print_icache_info(&self) {
+        println!("ICache not implemented")
+    }
     // mmu
     // todo
     // interrupt/exception

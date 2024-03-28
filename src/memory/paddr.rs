@@ -67,12 +67,19 @@ lazy_static! {
 
 impl Memory {
     pub fn read_p(&self, paddr: &PAddr, len: MemOperationSize) -> u64 {
+        if Memory::in_pmem(paddr) {
+            return len.read_sized(addr_of!(self.pmem[paddr.to_host_arr_index()]))
+        }
         match self.find_iomap(paddr) {
             Some(iomap) => {
                 iomap.device.borrow().read(iomap.paddr_to_device_mem_idx(paddr), len)
             }
-            None => len.read_sized(addr_of!(self.pmem[paddr.to_host_arr_index()]))
+            None => panic!("Illegal access: {:#x}", paddr.0)
         }
+    }
+
+    pub fn read_mem_unchecked_p(&self, paddr: &PAddr, len: MemOperationSize) -> u64 {
+        len.read_sized(addr_of!(self.pmem[paddr.to_host_arr_index()]))
     }
 
     pub fn write_p(&mut self, paddr: &PAddr, data: u64, len: MemOperationSize) {

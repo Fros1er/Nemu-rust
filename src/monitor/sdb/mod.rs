@@ -24,11 +24,17 @@ pub struct WatchPoint {
     prev_val: i64,
 }
 
-pub fn exec_once<T: Isa>(
+pub fn exec_once<T: Isa>(emulator: &mut Emulator<T>) -> (bool, bool, bool) {
+    let sdl_quit = emulator.device.update();
+    let not_halt = emulator.cpu.isa_exec_once();
+    (not_halt, false, sdl_quit)
+}
+
+pub fn exec_once_dbg<T: Isa>(
     emulator: &mut Emulator<T>,
     watchpoints: &mut HashMap<u32, WatchPoint>,
     breakpoints: &HashMap<u32, u64>,
-    _inst_count: i32,
+    _inst_count: u64,
 ) -> (bool, bool, bool) {
     cfg_if! {
         if #[cfg(feature="difftest")] {
@@ -37,9 +43,8 @@ pub fn exec_once<T: Isa>(
             }
         }
     }
-    let sdl_quit = emulator.device.update();
-    let not_halt = emulator.cpu.isa_exec_once();
 
+    let (not_halt, _, sdl_quit) = exec_once(emulator);
 
     let mut pause = false;
 
@@ -82,13 +87,13 @@ pub fn exec_once<T: Isa>(
     (not_halt, pause, sdl_quit)
 }
 
-pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (i32, u8) {
+pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
     let mut rl = DefaultEditor::new().unwrap();
     let mut watchpoints: HashMap<u32, WatchPoint> = HashMap::new();
     let mut breakpoints: HashMap<u32, u64> = HashMap::new();
     let mut next_watchpoint_idx = 0;
     let mut next_breakpoint_idx = 0;
-    let mut inst_count = 0;
+    let mut inst_count = 0u64;
     loop {
         let readline = rl.readline(format!("({:#x})>> ", emulator.cpu.isa_get_pc()).as_str());
         match readline {
@@ -115,7 +120,7 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (i32, u8) {
                     }
                     'c' => loop {
                         inst_count += 1;
-                        let (not_halt, wp_matched, sdl_quit) = exec_once(emulator, &mut watchpoints, &breakpoints, inst_count);
+                        let (not_halt, wp_matched, sdl_quit) = exec_once_dbg(emulator, &mut watchpoints, &breakpoints, inst_count);
                         if !not_halt {
                             return (inst_count, emulator.cpu.isa_get_exit_code());
                         }
@@ -130,7 +135,7 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (i32, u8) {
                     's' => {
                         // si
                         inst_count += 1;
-                        let (not_halt, _, sdl_quit) = exec_once(emulator, &mut watchpoints, &breakpoints, inst_count);
+                        let (not_halt, _, sdl_quit) = exec_once_dbg(emulator, &mut watchpoints, &breakpoints, inst_count);
                         if !not_halt {
                             return (inst_count, emulator.cpu.isa_get_exit_code());
                         }

@@ -59,7 +59,7 @@ impl Memory {
         }
     }
 
-    fn in_pmem(paddr: &PAddr) -> bool {
+    pub fn in_pmem(paddr: &PAddr) -> bool {
         PMEM_LEFT <= *paddr && PMEM_RIGHT.value() >= paddr.value()
     }
 

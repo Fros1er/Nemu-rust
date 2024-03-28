@@ -1,4 +1,4 @@
-use crate::isa::riscv64::inst::{init_patterns, Pattern};
+use crate::isa::riscv64::inst::PATTERNS;
 use crate::isa::riscv64::logo::RISCV_LOGO;
 use crate::isa::riscv64::reg::CSRName::{mcause, mepc};
 use crate::isa::riscv64::reg::MCauseCode::Breakpoint;
@@ -10,34 +10,24 @@ use crate::memory::vaddr::VAddr;
 use crate::memory::Memory;
 use crate::utils::configs::{CONFIG_MBASE, CONFIG_PC_RESET_OFFSET};
 use crate::utils::disasm::LLVMDisassembler;
-use log::{error, info, trace};
+use log::{error, info};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::str::FromStr;
 use strum::IntoEnumIterator;
+use crate::isa::riscv64::ibuf::SetAssociativeIBuf;
 use crate::isa::riscv64::reg::RegName::{a0, a1, a2, t0};
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 
 mod inst;
 mod logo;
 pub mod reg;
+mod ibuf;
 
 pub(crate) struct RISCV64 {
     state: RISCV64CpuState,
-    instruction_patterns: Vec<Pattern>,
     disassembler: LLVMDisassembler,
-}
-
-impl RISCV64CpuState {
-    fn new(memory: Rc<RefCell<Memory>>) -> RISCV64CpuState {
-        RISCV64CpuState {
-            regs: Registers::new(),
-            csrs: CSR::new(),
-            pc: VAddr::new(0),
-            dyn_pc: None,
-            memory,
-        }
-    }
+    ibuf: SetAssociativeIBuf,
 }
 
 pub(crate) struct RISCV64CpuState {
@@ -46,6 +36,18 @@ pub(crate) struct RISCV64CpuState {
     pc: VAddr,
     dyn_pc: Option<VAddr>,
     memory: Rc<RefCell<Memory>>,
+}
+
+impl RISCV64CpuState {
+    fn new(memory: Rc<RefCell<Memory>>) -> Self {
+        Self {
+            regs: Registers::new(),
+            csrs: CSR::new(),
+            pc: VAddr::new(0),
+            dyn_pc: None,
+            memory,
+        }
+    }
 }
 
 impl RISCV64CpuState {
@@ -65,15 +67,15 @@ const IMG: [u32; 5] = [
 ];
 
 impl Isa for RISCV64 {
-    fn new(memory: Rc<RefCell<Memory>>) -> RISCV64 {
+    fn new(memory: Rc<RefCell<Memory>>) -> Self {
         let reset_addr: PAddr = CONFIG_MBASE + CONFIG_PC_RESET_OFFSET;
         memory.borrow_mut().pmem_memcpy(&IMG, &reset_addr, 5);
         let mut state = RISCV64CpuState::new(memory);
         state.pc = reset_addr.into();
-        RISCV64 {
+        Self {
             state,
-            instruction_patterns: init_patterns(),
             disassembler: LLVMDisassembler::new("riscv64-unknown-linux-gnu"),
+            ibuf: SetAssociativeIBuf::new(CONFIG_MBASE),
         }
     }
     fn isa_logo() -> &'static [u8] {
@@ -91,7 +93,7 @@ impl Isa for RISCV64 {
 
     fn isa_get_reg_by_name(&self, name: &str) -> Result<u64, String> {
         if name == "pc" {
-            return Ok(self.state.pc.value() as u64);
+            return Ok(self.state.pc.value());
         }
         if let Ok(reg) = RegName::from_str(name) {
             return Ok(self.state.regs[reg]);
@@ -107,28 +109,34 @@ impl Isa for RISCV64 {
     }
 
     fn isa_exec_once(&mut self) -> bool {
-        // ifetch
-        let inst = self.state.memory.borrow().ifetch(&self.state.pc, DWORD);
-        trace!("{:#x}, {}", self.state.pc.value(), self.disassembler.disassemble(inst as u32,  self.state.pc.value() as u64));
-        if inst == 0x0000006f {
-            info!("dead loop at pc {:#x}", self.state.pc.value());
-            self.state.regs[a0] = 1;
-            return false;
-        }
-        // decode exec
-        match self
-            .instruction_patterns
-            .iter()
-            .find(|p| p.match_inst(&inst))
-        {
+        let pc_paddr: &PAddr = &(&self.state.pc).into();
+        let (pattern, decode) = match self.ibuf.get(pc_paddr) {
+            Some(content) => content,
             None => {
-                error!("invalid inst: {:#x} at addr {:#x}", inst, self.state.pc.value());
-                error!("disasm as: {}", self.disassembler.disassemble(inst as u32, self.state.pc.value()));
-                self.state.regs[a0] = 1;
-                return false;
+                let inst = self.state.memory.borrow().ifetch(&self.state.pc, DWORD);
+                if inst == 0x0000006f {
+                    info!("dead loop at pc {:#x}", self.state.pc.value());
+                    self.state.regs[a0] = 1;
+                    return false;
+                }
+                // decode exec
+                match PATTERNS
+                    .iter()
+                    .find(|p| p.match_inst(&inst))
+                {
+                    None => {
+                        error!("invalid inst: {:#x} at addr {:#x}", inst, self.state.pc.value());
+                        error!("disasm as: {}", self.disassembler.disassemble(inst as u32, self.state.pc.value()));
+                        self.state.regs[a0] = 1;
+                        return false;
+                    }
+                    Some(pat) => {
+                        self.ibuf.set(pc_paddr, pat, pat.decode(&inst))
+                    }
+                }
             }
-            Some(pat) => pat.exec(&inst, &mut self.state),
-        }
+        };
+        pattern.exec(decode, &mut self.state);
 
         match &self.state.dyn_pc {
             Some(pc) => self.state.pc = *pc,
@@ -146,6 +154,10 @@ impl Isa for RISCV64 {
 
     fn isa_get_exit_code(&self) -> u8 {
         self.state.regs[a0] as u8
+    }
+
+    fn isa_print_icache_info(&self) {
+        self.ibuf.print_info()
     }
 
     // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr {

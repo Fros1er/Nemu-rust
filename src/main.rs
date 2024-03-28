@@ -3,7 +3,7 @@ use crate::isa::riscv64::RISCV64;
 use crate::isa::Isa;
 use crate::memory::Memory;
 use crate::monitor::init_log;
-use crate::monitor::sdb::{exec_once, sdb_loop};
+use crate::monitor::sdb::{exec_once, exec_once_dbg, sdb_loop};
 use clap::Parser;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -26,7 +26,7 @@ pub struct Emulator<T: Isa> {
     device: Devices,
     difftest_ctx: Option<DifftestContext>,
     batch: bool,
-    exitcode: u8
+    exitcode: u8,
 }
 
 impl<T: Isa> Emulator<T> {
@@ -48,7 +48,7 @@ impl<T: Isa> Emulator<T> {
             device,
             difftest_ctx,
             batch: args.batch,
-            exitcode: 0
+            exitcode: 0,
         }
     }
 
@@ -58,10 +58,10 @@ impl<T: Isa> Emulator<T> {
             self.exitcode = exitcode;
             inst_cont
         } else {
-            let mut inst_count= 0;
+            let mut inst_count = 0;
             loop {
-               inst_count += 1;
-                let (not_halt, _, sdl_quit) = exec_once(self, &mut HashMap::new(), &HashMap::new(), inst_count);
+                inst_count += 1;
+                let (not_halt, _, sdl_quit) = exec_once(self);
                 if !not_halt {
                     self.exitcode = self.cpu.isa_get_exit_code();
                     break;
@@ -73,6 +73,7 @@ impl<T: Isa> Emulator<T> {
             inst_count
         };
         info!("Instruction executed: {}", cnt);
+        self.cpu.isa_print_icache_info();
     }
 
     pub fn exit(mut self) -> ExitCode {

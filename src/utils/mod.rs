@@ -19,9 +19,10 @@ pub mod tests {
         Emulator::<RISCV64> {
             cpu,
             memory,
-            device: device,
+            device,
             difftest_ctx: None,
-            batch: false
+            batch: false,
+            exitcode: 0,
         }
     }
 }

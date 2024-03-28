@@ -51,7 +51,7 @@ impl From<PAddr> for VAddr {
 
 impl Memory {
     pub fn ifetch(&self, vaddr: &VAddr, len: MemOperationSize) -> u64 {
-        self.read(vaddr, len)
+        self.read_mem_unchecked_p(&vaddr.into(), len)
     }
     pub fn read(&self, vaddr: &VAddr, len: MemOperationSize) -> u64 {
         self.read_p(&vaddr.into(), len)
