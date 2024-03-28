@@ -27,7 +27,7 @@ pub struct WatchPoint {
 
 #[inline]
 pub fn exec_once<T: Isa>(emulator: &mut Emulator<T>) -> (bool, bool, bool) {
-    let sdl_quit = emulator.device.update();
+    let sdl_quit = emulator.device.has_stopped();
     let not_halt = emulator.cpu.isa_exec_once();
     (not_halt, false, sdl_quit)
 }

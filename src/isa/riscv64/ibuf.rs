@@ -90,16 +90,14 @@ impl IBufRow {
 // }
 
 pub struct SetAssociativeIBuf {
-    mem_base: u64,
     entries: Box<[IBufRow]>,
     hit: u64,
     missed: u64,
 }
 
 impl SetAssociativeIBuf {
-    pub(crate) fn new(mem_base: PAddr) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            mem_base: mem_base.value(),
             entries: vec![IBufRow::new(); IBUF_ENTRY_MASK].into_boxed_slice(),
             hit: 0,
             missed: 0,

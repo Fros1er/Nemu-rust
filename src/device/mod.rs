@@ -1,19 +1,18 @@
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+use std::sync::atomic::Ordering::Relaxed;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use sdl2::event::Event;
-use sdl2::EventPump;
+use sdl2::pixels::PixelFormatEnum;
 
 use crate::device::keyboard::{Keyboard, KEYBOARD_MMIO_START};
 use crate::device::serial::{Serial, SERIAL_MMIO_START};
 use crate::device::timer::{Timer, TIMER_MMIO_START};
-use crate::device::vga::{VGA, VGA_CTL_MMIO_START, VGA_FRAME_BUF_MMIO_START};
+use crate::device::vga::{SCREEN_H, SCREEN_W, VGA, VGA_CTL_MMIO_START, VGA_FRAME_BUF_MMIO_START, VGACtrl};
 use crate::memory::Memory;
 
 mod keyboard;
@@ -21,89 +20,97 @@ mod vga;
 mod serial;
 mod timer;
 
-trait Device {
-    fn update(&mut self);
-}
-
 pub struct Devices {
-    event_pump: EventPump,
+    // event_pump: EventPump,
     // vga: Rc<RefCell<VGA>>,
-    keyboard: Rc<RefCell<Keyboard>>,
+    // keyboard: Rc<RefCell<Keyboard>>,
     // timer: Rc<RefCell<Timer>>,
-    devices: Vec<Rc<RefCell<dyn Device>>>,
 
-    device_need_update: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
-    update_delay_thread: JoinHandle<()>,
+    update_thread: JoinHandle<()>,
 }
 
 impl Devices {
     pub fn new(memory: &mut Memory) -> Self {
-        let sdl_context = sdl2::init().unwrap();
-
-        let device_need_update = Arc::new(AtomicBool::new(false));
-        let device_need_update_t = device_need_update.clone();
         let stopped = Arc::new(AtomicBool::new(false));
-        let stopped_t = stopped.clone();
+        let stopped_tmp = stopped.clone();
 
-        let (vga_ctrl, vga) = VGA::new(&sdl_context);
-        let vga_ctrl = Rc::new(RefCell::new(vga_ctrl));
-        let keyboard = Rc::new(RefCell::new(Keyboard::new()));
-        let serial = Rc::new(RefCell::new(Serial::new()));
-        let timer = Rc::new(RefCell::new(Timer::new(stopped.clone())));
+        let vga = Arc::new(VGA::new());
+        let vga_ctrl = Arc::new(VGACtrl::new());
+        let keyboard = Arc::new(Keyboard::new());
+        let serial = Arc::new(Serial::new());
+        let timer = Arc::new(Timer::new(stopped.clone()));
         memory.add_mmio(VGA_FRAME_BUF_MMIO_START, vga.clone());
         memory.add_mmio(VGA_CTL_MMIO_START, vga_ctrl.clone());
         memory.add_mmio(KEYBOARD_MMIO_START, keyboard.clone());
         memory.add_mmio(SERIAL_MMIO_START, serial.clone());
         memory.add_mmio(TIMER_MMIO_START, timer.clone());
 
-        let update_delay_thread = thread::spawn(move || {
-            while !stopped_t.load(Relaxed) {
-                device_need_update_t.store(true, Release);
+        let update_thread = thread::spawn(move || {
+            let sdl_context = sdl2::init().unwrap();
+            let video_subsystem = sdl_context.video().unwrap();
+
+            let window = video_subsystem
+                .window("Emulator", SCREEN_W, SCREEN_H)
+                .position_centered()
+                .resizable()
+                .build()
+                .unwrap();
+            let mut canvas = window.into_canvas().build().unwrap();
+            let texture_creator = canvas.texture_creator();
+            let mut texture = texture_creator
+                .create_texture_static(PixelFormatEnum::ARGB8888, SCREEN_W, SCREEN_H).unwrap();
+            let mut event_pump = sdl_context.event_pump().unwrap();
+
+            let stopped = stopped_tmp;
+            'outer: while !stopped.load(Relaxed) {
+                for event in event_pump.poll_iter() {
+                    // println!("{}", event.type_id());
+                    match event {
+                        Event::Quit { .. } => {
+                            break 'outer;
+                        }
+                        // Event::Window { win_event, .. } => {
+                        //     if win_event == Close {
+                        //         break 'outer;
+                        //     }
+                        // }
+                        Event::KeyDown { keycode, .. } => {
+                            keyboard.send_key(keycode.unwrap(), true);
+                        }
+                        Event::KeyUp { keycode, .. } => {
+                            keyboard.send_key(keycode.unwrap(), false);
+                        }
+                        _ => {}
+                    }
+                }
+                {
+                    let vga_mem = vga.mem.lock().unwrap();
+                    texture.update(None, vga_mem.deref(), (SCREEN_W * 4) as usize).unwrap();
+                }
+                canvas.clear();
+                canvas.copy(&texture, None, None).unwrap();
+                canvas.present();
                 thread::sleep(Duration::from_millis(10));
             }
+            stopped.store(true, Relaxed);
         });
 
         Self {
-            event_pump: sdl_context.event_pump().unwrap(),
-            devices: vec![vga_ctrl, keyboard.clone(), serial],
             // vga,
-            keyboard,
+            // keyboard,
             // timer,
-            device_need_update,
             stopped,
-            update_delay_thread,
+            update_thread,
         }
-    }
-
-    pub fn update(&mut self) -> bool {
-        if !self.device_need_update.load(Acquire) {
-            return false;
-        }
-        self.device_need_update.store(false, Release);
-        for event in self.event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. } => {
-                    return true;
-                }
-                Event::KeyDown { keycode, .. } => {
-                    self.keyboard.borrow_mut().send_key(keycode.unwrap(), true);
-                }
-                Event::KeyUp { keycode, .. } => {
-                    self.keyboard.borrow_mut().send_key(keycode.unwrap(), false);
-                }
-                _ => {}
-            }
-        }
-        for device in &self.devices {
-            device.borrow_mut().update()
-        }
-
-        false
     }
 
     pub fn stop(self) {
         self.stopped.store(true, Relaxed);
-        self.update_delay_thread.join().unwrap();
+        self.update_thread.join().unwrap();
+    }
+
+    pub fn has_stopped(&self) -> bool {
+        self.stopped.load(Relaxed)
     }
 }

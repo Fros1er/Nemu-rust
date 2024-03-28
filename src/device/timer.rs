@@ -13,7 +13,6 @@ pub const TIMER_MMIO_START: PAddr = PAddr::new(0xa0000048);
 
 pub struct Timer {
     mem: Arc<AtomicU64>,
-    // update_thread: JoinHandle<()>
 }
 
 impl Timer {
@@ -41,10 +40,6 @@ impl Timer {
 }
 
 impl IOMap for Timer {
-    fn data_for_default_read(&self) -> &[u8] {
-        // &self.mem
-        panic!("No default read for timer")
-    }
 
     fn len(&self) -> usize {
         8
@@ -54,9 +49,5 @@ impl IOMap for Timer {
         let time = self.mem.load(Acquire);
         let res = len.read_sized(unsafe { (addr_of!(time) as *const u8).offset(offset as isize) });
         res
-    }
-
-    fn write(&mut self, _offset: usize, _data: u64, _len: MemOperationSize) {
-        panic!("Write to timer is not allowed")
     }
 }

@@ -75,7 +75,7 @@ impl Isa for RISCV64 {
         Self {
             state,
             disassembler: LLVMDisassembler::new("riscv64-unknown-linux-gnu"),
-            ibuf: SetAssociativeIBuf::new(CONFIG_MBASE),
+            ibuf: SetAssociativeIBuf::new(),
         }
     }
     fn isa_logo() -> &'static [u8] {

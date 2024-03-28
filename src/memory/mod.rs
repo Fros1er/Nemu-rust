@@ -1,6 +1,4 @@
-use std::cell::RefCell;
-use std::ptr::addr_of;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::memory::paddr::{init_mem, PAddr, PMEM_LEFT, PMEM_RIGHT};
 use crate::memory::vaddr::MemOperationSize;
@@ -10,29 +8,29 @@ pub mod paddr;
 pub mod vaddr;
 
 pub trait IOMap {
-    fn data_for_default_read(&self) -> &[u8];
-    fn len(&self) -> usize {
-        self.data_for_default_read().len()
+    fn len(&self) -> usize;
+
+    /// guarantee ofs is inside self.mem
+    fn read(&self, _offset: usize, _len: MemOperationSize) -> u64 {
+        panic!("Read should not happen");
     }
 
-    fn read(&self, offset: usize, len: MemOperationSize) -> u64 {
-        len.read_sized(addr_of!(self.data_for_default_read()[offset]))
+    /// guarantee ofs is inside self.mem
+    ///
+    /// Use interior mutability pattern for flexibility
+    fn write(&self, _offset: usize, _data: u64, _len: MemOperationSize) {
+        panic!("Write should not happen");
     }
-
-    // guarantee ofs is inside self.mem
-    fn write(&mut self, offset: usize, data: u64, len: MemOperationSize);
-
-    // fn data_mut(&mut self) -> &mut [u8];
 }
 
 pub struct IOMapEntry {
     left: PAddr,
     right: PAddr,
-    device: Rc<RefCell<dyn IOMap>>,
+    device: Arc<dyn IOMap>,
 }
 
 impl IOMapEntry {
-    fn new(left: PAddr, right: PAddr, device: Rc<RefCell<dyn IOMap>>) -> Self {
+    fn new(left: PAddr, right: PAddr, device: Arc<dyn IOMap>) -> Self {
         Self { left, right, device }
     }
     fn addr_inside(&self, paddr: &PAddr) -> bool {
@@ -81,8 +79,8 @@ impl Memory {
         None
     }
 
-    pub fn add_mmio(&mut self, left: PAddr, device: Rc<RefCell<dyn IOMap>>) {
-        let right = left.clone() + device.borrow().len() as u64;
+    pub fn add_mmio(&mut self, left: PAddr, device: Arc<dyn IOMap>) {
+        let right = left.clone() + device.len() as u64;
         let io_map = IOMapEntry::new(left, right, device);
         if Self::in_pmem(&io_map.left) && Self::in_pmem(&io_map.right) {
             panic!("MMIO region ({:#x}, {:#x}) overlaps with pmem", io_map.left, io_map.right)

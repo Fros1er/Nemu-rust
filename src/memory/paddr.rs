@@ -80,7 +80,7 @@ impl Memory {
         }
         match self.find_iomap(paddr) {
             Some(iomap) => {
-                iomap.device.borrow().read(iomap.paddr_to_device_mem_idx(paddr), len)
+                iomap.device.read(iomap.paddr_to_device_mem_idx(paddr), len)
             }
             None => panic!("Illegal access: {:#x}", paddr.0)
         }
@@ -96,7 +96,7 @@ impl Memory {
         }
         match self.find_iomap_mut(paddr) {
             Some(iomap) => {
-                iomap.device.borrow_mut().write(iomap.paddr_to_device_mem_idx(paddr), data, len);
+                iomap.device.write(iomap.paddr_to_device_mem_idx(paddr), data, len);
             }
             None => panic!("Illegal access: {:#x}", paddr.0)
         };

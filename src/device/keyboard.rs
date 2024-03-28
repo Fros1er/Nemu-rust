@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::ptr::addr_of_mut;
+use std::sync::Mutex;
 use sdl2::keyboard::Keycode;
-use crate::device::Device;
 use crate::memory::IOMap;
 use crate::memory::paddr::PAddr;
 use crate::memory::vaddr::MemOperationSize;
@@ -37,9 +36,8 @@ build_keymap! {
 }
 
 pub struct Keyboard {
-    // queue: VecDeque<i32>,
     keycode_map: HashMap<Keycode, NemuKeycode>,
-    mem: [u8; 8],
+    mem: Mutex<[u8; 8]>,
 }
 
 impl Keyboard {
@@ -47,12 +45,11 @@ impl Keyboard {
         let keycode_map = build_keymap();
         Self {
             keycode_map,
-            // queue: VecDeque::new(),
-            mem: [0; 8],
+            mem: Mutex::new([0; 8]), // mem[3:0]: keycode, mem[7:4]: write anything to set keycode to none
         }
     }
 
-    pub fn send_key(&mut self, keycode: Keycode, is_down: bool) {
+    pub fn send_key(&self, keycode: Keycode, is_down: bool) {
         let keycode = if let Some(keycode) = self.keycode_map.get(&keycode) {
             let mut keycode = keycode.clone() as u32;
             if is_down {
@@ -63,26 +60,29 @@ impl Keyboard {
             NemuKeycode::None as u32
         };
         unsafe {
-            (addr_of_mut!(self.mem[0]) as *mut u32).write(keycode);
+            let addr = self.mem.lock().unwrap().get_unchecked_mut(0) as *mut u8;
+            (addr as *mut u32).write(keycode);
         }
     }
 }
 
-impl Device for Keyboard {
-    fn update(&mut self) {}
-}
-
 impl IOMap for Keyboard {
-    fn data_for_default_read(&self) -> &[u8] {
-        &self.mem
+    fn len(&self) -> usize {
+        8
+    }
+    fn read(&self, offset: usize, len: MemOperationSize) -> u64 {
+        unsafe { len.read_sized(self.mem.lock().unwrap().get_unchecked(offset)) }
     }
 
-    fn write(&mut self, offset: usize, data: u64, _size: MemOperationSize) {
+    fn write(&self, offset: usize, data: u64, _size: MemOperationSize) {
         if offset < 4 {
             panic!("Write to keyboard keycode is not allowed")
         }
         if data != 0 {
-            unsafe { (self.mem.get_unchecked_mut(0) as *mut u8 as *mut u32).write(NemuKeycode::None as u32); }
+            unsafe {
+                let addr = self.mem.lock().unwrap().get_unchecked_mut(0) as *mut u8;
+                (addr as *mut u32).write(NemuKeycode::None as u32);
+            }
         }
     }
 }
