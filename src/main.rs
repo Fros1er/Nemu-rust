@@ -3,15 +3,16 @@ use crate::isa::riscv64::RISCV64;
 use crate::isa::Isa;
 use crate::memory::Memory;
 use crate::monitor::init_log;
-use crate::monitor::sdb::{exec_once, exec_once_dbg, sdb_loop};
+use crate::monitor::sdb::{exec_once, sdb_loop};
 use clap::Parser;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::ops::{DerefMut};
 use std::process::ExitCode;
 use std::rc::Rc;
+use cfg_if::cfg_if;
 use log::info;
 use crate::monitor::sdb::difftest_qemu::DifftestContext;
+use crate::utils::cfg_if_feat;
 
 mod device;
 mod engine;
@@ -58,9 +59,12 @@ impl<T: Isa> Emulator<T> {
             self.exitcode = exitcode;
             inst_cont
         } else {
+            #[allow(unused_mut)]
             let mut inst_count = 0;
             loop {
-                inst_count += 1;
+                cfg_if_feat!("log_inst", {
+                    inst_count += 1;
+                });
                 let (not_halt, _, sdl_quit) = exec_once(self);
                 if !not_halt {
                     self.exitcode = self.cpu.isa_get_exit_code();

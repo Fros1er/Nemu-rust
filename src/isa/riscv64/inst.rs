@@ -1,6 +1,7 @@
 use lazy_static::lazy_static;
 use crate::isa::riscv64::inst::InstType::{B, I, J, R, S, U};
 use crate::isa::riscv64::reg::Reg;
+use crate::isa::riscv64::reg::RegName::fake_zero;
 use crate::isa::riscv64::RISCV64CpuState;
 use crate::memory::vaddr::MemOperationSize::{Byte, DWORD, QWORD, WORD};
 use crate::memory::vaddr::VAddr;
@@ -74,6 +75,9 @@ impl Pattern {
                 imm = (bits!(inst, 31, 31) << 20) | (bits!(inst, 19, 12) << 12) | (bits!(inst, 20, 20) << 11) | (bits!(inst, 30, 21) << 1);
                 imm = sign_extend64(imm, 21);
             }
+        }
+        if rd == 0 {
+            rd = fake_zero as u64;
         }
         Decode { rd, rs1, rs2, imm }
     }
@@ -300,7 +304,7 @@ pub static ref PATTERNS: [Pattern; 59] = [
         },
     ),
 
-    // arithmeti
+    // arithmetic
     make_pattern(
         "??????? ????? ????? 000 ????? 0010011", I, "addi",
         |inst, state| {
@@ -310,7 +314,7 @@ pub static ref PATTERNS: [Pattern; 59] = [
     make_pattern(
         "??????? ????? ????? 000 ????? 0011011", I, "addiw",
         |inst, state| {
-            state.regs[inst.rd] = sign_extend64(inst.src1(state).wrapping_add(inst.imm), 32);
+            state.regs[inst.rd] = sign_ext_32to64(inst.src1_i32(state).wrapping_add(inst.imm as i32) as u64);
         },
     ),
     make_pattern("0000000 ????? ????? 000 ????? 0110011", R, "add", gen_arithmetic!(wrapping_add)),

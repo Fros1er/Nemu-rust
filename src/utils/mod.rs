@@ -1,6 +1,18 @@
 pub mod configs;
 pub mod disasm;
 
+macro_rules! cfg_if_feat {
+    ($feature:literal, $({ $($tokens:tt)* })?) => {
+        cfg_if! {
+            if #[cfg(feature = $feature)] {
+                $($($tokens)*)?
+            }
+        }
+    };
+}
+
+pub(crate) use cfg_if_feat;
+
 #[cfg(test)]
 pub mod tests {
     use crate::device::Devices;

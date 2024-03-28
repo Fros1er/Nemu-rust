@@ -66,9 +66,17 @@ lazy_static! {
 }
 
 impl Memory {
+    fn addr_of_mem(&self, paddr: &PAddr) -> *const u8 {
+        unsafe { self.pmem.get_unchecked(paddr.to_host_arr_index()) }
+    }
+
+    fn addr_of_mem_mut(&mut self, paddr: &PAddr) -> *mut u8 {
+        unsafe { self.pmem.get_unchecked_mut(paddr.to_host_arr_index()) }
+    }
+
     pub fn read_p(&self, paddr: &PAddr, len: MemOperationSize) -> u64 {
         if Memory::in_pmem(paddr) {
-            return len.read_sized(addr_of!(self.pmem[paddr.to_host_arr_index()]))
+            return len.read_sized(self.addr_of_mem(paddr));
         }
         match self.find_iomap(paddr) {
             Some(iomap) => {
@@ -83,11 +91,14 @@ impl Memory {
     }
 
     pub fn write_p(&mut self, paddr: &PAddr, data: u64, len: MemOperationSize) {
+        if Memory::in_pmem(paddr) {
+            return len.write_sized(data, self.addr_of_mem_mut(paddr));
+        }
         match self.find_iomap_mut(paddr) {
             Some(iomap) => {
                 iomap.device.borrow_mut().write(iomap.paddr_to_device_mem_idx(paddr), data, len);
             }
-            None => len.write_sized(data, addr_of_mut!(self.pmem[paddr.to_host_arr_index()]))
+            None => panic!("Illegal access: {:#x}", paddr.0)
         };
     }
     /// len: n elements, not n bytes!

@@ -108,6 +108,7 @@ impl Isa for RISCV64 {
         self.state.pc.value() as u64
     }
 
+    #[inline]
     fn isa_exec_once(&mut self) -> bool {
         let pc_paddr: &PAddr = &(&self.state.pc).into();
         let (pattern, decode) = match self.ibuf.get(pc_paddr) {
@@ -139,11 +140,12 @@ impl Isa for RISCV64 {
         pattern.exec(decode, &mut self.state);
 
         match &self.state.dyn_pc {
-            Some(pc) => self.state.pc = *pc,
+            Some(pc) => {
+                self.state.pc = *pc;
+                self.state.dyn_pc = None;
+            },
             None => self.state.pc.inc(DWORD),
         }
-        self.state.dyn_pc = None;
-        self.state.regs[0] = 0;
 
         if self.state.csrs[mcause] == Breakpoint as u64 {
             info!("ebreak at pc {:#x}", self.state.pc.value() - 4);
@@ -157,7 +159,7 @@ impl Isa for RISCV64 {
     }
 
     fn isa_print_icache_info(&self) {
-        self.ibuf.print_info()
+        self.ibuf.print_info();
     }
 
     // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr {

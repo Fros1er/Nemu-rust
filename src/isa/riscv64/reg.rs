@@ -4,11 +4,11 @@ use strum_macros::{EnumIter, EnumString, IntoStaticStr}; // 0.17.1
 
 pub type Reg = u64;
 
-pub struct Registers(pub(crate) [Reg; 32]);
+pub struct Registers(pub(crate) [Reg; 33]);
 
 impl Registers {
     pub(crate) fn new() -> Self {
-        Self([0; 32])
+        Self([0; 33])
     }
 }
 
@@ -59,6 +59,7 @@ pub enum RegName {
     t4,
     t5,
     t6,
+    fake_zero
 }
 
 #[allow(non_camel_case_types)]
@@ -82,7 +83,7 @@ impl Index<u64> for Registers {
     type Output = Reg;
 
     fn index(&self, index: u64) -> &Self::Output {
-        &self.0[index as usize]
+        unsafe { self.0.get_unchecked(index as usize) }
     }
 }
 
@@ -90,19 +91,19 @@ impl Index<RegName> for Registers {
     type Output = Reg;
 
     fn index(&self, index: RegName) -> &Self::Output {
-        &self.0[index as usize]
+        unsafe { self.0.get_unchecked(index as usize) }
     }
 }
 
 impl IndexMut<u64> for Registers {
     fn index_mut(&mut self, index: u64) -> &mut Self::Output {
-        &mut self.0[index as usize]
+        unsafe { self.0.get_unchecked_mut(index as usize) }
     }
 }
 
 impl IndexMut<RegName> for Registers {
     fn index_mut(&mut self, index: RegName) -> &mut Self::Output {
-        &mut self.0[index as usize]
+        unsafe { self.0.get_unchecked_mut(index as usize) }
     }
 }
 
@@ -118,7 +119,7 @@ impl Index<CSRName> for CSR {
     type Output = Reg;
 
     fn index(&self, index: CSRName) -> &Self::Output {
-        &self.0[index as usize]
+        unsafe { self.0.get_unchecked(index as usize) }
     }
 }
 
@@ -130,6 +131,6 @@ impl IndexMut<u8> for CSR {
 
 impl IndexMut<CSRName> for CSR {
     fn index_mut(&mut self, index: CSRName) -> &mut Self::Output {
-        &mut self.0[index as usize]
+        unsafe { self.0.get_unchecked_mut(index as usize) }
     }
 }

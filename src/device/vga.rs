@@ -89,7 +89,7 @@ impl IOMap for VGAControl {
         if offset < 4 {
             panic!("Write VGA control size is not allowed")
         }
-        len.write_sized(data, addr_of_mut!(self.mem[offset]))
+        unsafe { len.write_sized(data, self.mem.get_unchecked_mut(offset)) }
     }
 }
 
@@ -103,6 +103,6 @@ impl IOMap for VGA {
     }
 
     fn write(&mut self, offset: usize, data: u64, len: MemOperationSize) {
-        len.write_sized(data, addr_of_mut!(self.mem[offset]))
+        unsafe { len.write_sized(data, self.mem.get_unchecked_mut(offset)) }
     }
 }

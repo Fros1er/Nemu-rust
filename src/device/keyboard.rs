@@ -82,7 +82,7 @@ impl IOMap for Keyboard {
             panic!("Write to keyboard keycode is not allowed")
         }
         if data != 0 {
-            unsafe { (addr_of_mut!(self.mem[0]) as *mut u32).write(NemuKeycode::None as u32); }
+            unsafe { (self.mem.get_unchecked_mut(0) as *mut u8 as *mut u32).write(NemuKeycode::None as u32); }
         }
     }
 }

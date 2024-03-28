@@ -1,5 +1,6 @@
 use cfg_if::cfg_if;
 use log::info;
+use crate::utils::cfg_if_feat;
 
 cfg_if! {
     if #[cfg(feature="difftest")] {
@@ -18,13 +19,11 @@ cfg_if! {
 
 impl DifftestContext {
     pub fn exit(&mut self) {
-        cfg_if! {
-            if #[cfg(feature="difftest")] {
-                if let Err(err) = self.qemu_proc.kill() {
-                    error!("{}", err);
-                }
+        cfg_if_feat!("difftest", {
+            if let Err(err) = self.qemu_proc.kill() {
+                error!("{}", err);
             }
-        }
+        });
     }
 }
 

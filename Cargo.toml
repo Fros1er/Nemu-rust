@@ -5,7 +5,9 @@ edition = "2021"
 
 [features]
 default = ["difftest"]
+#default = ["difftest", "log_inst"]
 difftest = []
+log_inst = []
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
