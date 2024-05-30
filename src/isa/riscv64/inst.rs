@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 use crate::isa::riscv64::inst::InstType::{B, I, J, R, S, U};
-use crate::isa::riscv64::reg::Reg;
+use crate::isa::riscv64::reg::{MCauseCode, Reg};
 use crate::isa::riscv64::reg::RegName::fake_zero;
 use crate::isa::riscv64::RISCV64CpuState;
 use crate::memory::vaddr::MemOperationSize::{Byte, DWORD, QWORD, WORD};
@@ -19,7 +19,7 @@ pub struct Pattern {
     mask: u64,
     key: u64,
     inst_type: InstType,
-    _name: &'static str,
+    pub _name: &'static str,
     op: fn(&Decode, &mut RISCV64CpuState),
 }
 
@@ -284,7 +284,7 @@ macro_rules! gen_arithmetic_uw {
 
 
 lazy_static! {
-pub static ref PATTERNS: [Pattern; 59] = [
+pub static ref PATTERNS: [Pattern; 65] = [
     // memory
     make_pattern("??????? ????? ????? 000 ????? 0000011", I, "lb", gen_load!(Byte)),
     make_pattern("??????? ????? ????? 100 ????? 0000011", I, "lbu", gen_load_u!(Byte)),
@@ -428,8 +428,8 @@ pub static ref PATTERNS: [Pattern; 59] = [
         I,
         "jalr",
         |inst, state| {
-            state.regs[inst.rd] = state.pc.value() + 4;
             state.dyn_pc = Some(VAddr::new(inst.src1(state).wrapping_add(inst.imm)));
+            state.regs[inst.rd] = state.pc.value() + 4;
         },
     ),
 
@@ -458,6 +458,28 @@ pub static ref PATTERNS: [Pattern; 59] = [
             state.regs[inst.rd] = if inst.src1(state) < inst.imm { 1 } else { 0 }
         },
     ),
+    // Zicsr
+    make_pattern(
+        "??????? ????? ????? 001 ????? 1110011", I, "csrrw",
+        |inst, state| {
+            state.regs[inst.rd] = state.csrs[inst.imm];
+            state.csrs[inst.imm] = state.regs[inst.rs1];
+        },
+    ),
+    make_pattern(
+        "??????? ????? ????? 010 ????? 1110011", I, "csrrs",
+        |inst, state| {
+            state.regs[inst.rd] = state.csrs[inst.imm];
+            state.csrs[inst.imm] |= state.regs[inst.rs1];
+        },
+    ),
+    make_pattern(
+        "??????? ????? ????? 011 ????? 1110011", I, "csrrc",
+        |inst, state| {
+            state.regs[inst.rd] = state.csrs[inst.imm];
+            state.csrs[inst.imm] &= !state.regs[inst.rs1];
+        },
+    ),
 
     // misc
     make_pattern(
@@ -468,7 +490,19 @@ pub static ref PATTERNS: [Pattern; 59] = [
     ),
     make_pattern(
         "0000000 00001 00000 000 00000 1110011", I, "ebreak",
-        |_inst, state| state.trap(),
+        |_inst, state| state.trap(MCauseCode::Breakpoint),
+    ),
+    make_pattern(
+        "0000000 00000 00000 000 00000 1110011", I, "ecall",
+        |_inst, state| state.trap(MCauseCode::ECallM),
+    ),
+    make_pattern(
+        "0001000 00010 00000 000 00000 1110011", I, "sret",
+        |_inst, state| state.ret()
+    ),
+    make_pattern(
+        "0011000 00010 00000 000 00000 1110011", I, "mret",
+        |_inst, state| state.ret()
     ),
 ];
 }

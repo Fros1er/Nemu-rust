@@ -1,9 +1,9 @@
 use crate::isa::riscv64::inst::PATTERNS;
 use crate::isa::riscv64::logo::RISCV_LOGO;
-use crate::isa::riscv64::reg::CSRName::{mcause, mepc};
+use crate::isa::riscv64::reg::CSRName::{mcause, mepc, mtvec};
 use crate::isa::riscv64::reg::MCauseCode::Breakpoint;
-use crate::isa::riscv64::reg::{CSRName, Reg, RegName, Registers, CSR, format_regs};
-use crate::isa::Isa;
+use crate::isa::riscv64::reg::{CSRName, Reg, RegName, Registers, CSR, format_regs, MCauseCode};
+use crate::isa::{InstInfo, Isa};
 use crate::memory::paddr::PAddr;
 use crate::memory::vaddr::MemOperationSize::DWORD;
 use crate::memory::vaddr::VAddr;
@@ -14,6 +14,7 @@ use log::{error, info};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::str::FromStr;
+use std::thread;
 use strum::IntoEnumIterator;
 use crate::isa::riscv64::ibuf::SetAssociativeIBuf;
 use crate::isa::riscv64::reg::RegName::{a0, a1, a2, t0};
@@ -50,11 +51,25 @@ impl RISCV64CpuState {
     }
 }
 
+impl Drop for RISCV64CpuState {
+    fn drop(&mut self) {
+        if thread::panicking() {
+            eprintln!("regs: {}\ncsrs: {}\npc: {}", self.regs, self.csrs, self.pc.value())
+        }
+    }
+}
+
 impl RISCV64CpuState {
-    fn trap(&mut self) {
+    fn trap(&mut self, cause: MCauseCode) {
         self.csrs[mepc] = self.pc.value() as Reg;
-        self.csrs[mcause] = Breakpoint as u64;
+        self.csrs[mcause] = cause as u64;
+        self.dyn_pc = Some(VAddr::new(self.csrs[mtvec].into()))
         // TODO
+    }
+
+    fn ret(&mut self) {
+        self.dyn_pc = Some(VAddr::new(self.csrs[mepc].into()));
+        // info!("Ret mepc: {:#x}", self.csrs[mepc]);
     }
 }
 
@@ -160,6 +175,13 @@ impl Isa for RISCV64 {
 
     fn isa_print_icache_info(&self) {
         self.ibuf.print_info();
+    }
+
+    fn isa_get_prev_inst_info(&mut self, prev_pc: &PAddr) -> Result<InstInfo, ()> {
+        let (pattern, _) = self.ibuf.get(prev_pc).unwrap();
+        Ok(InstInfo {
+            is_branch: pattern._name == "jal" || pattern._name == "jalr"
+        })
     }
 
     // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr {

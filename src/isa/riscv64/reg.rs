@@ -1,6 +1,11 @@
+use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::ops::{Index, IndexMut};
+
 use strum::IntoEnumIterator;
-use strum_macros::{EnumIter, EnumString, IntoStaticStr}; // 0.17.1
+use strum_macros::{EnumIter, EnumString, IntoStaticStr};
+
+// 0.17.1
 
 pub type Reg = u64;
 
@@ -12,16 +17,45 @@ impl Registers {
     }
 }
 
-pub struct CSR([Reg; 2]);
+impl Display for Registers {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut s = String::new();
+        for reg in RegName::iter() {
+            let name: &'static str = reg.into();
+            s.push_str(format!("{}: {:#x}\n", name, self[reg]).as_str())
+        }
+        write!(f, "{}", s)
+    }
+}
+
+#[derive(Debug)]
+pub struct CSR(HashMap<u64, Reg>);
 
 impl CSR {
     pub fn new() -> Self {
-        Self([0; 2])
+        let mut map = HashMap::new();
+        for name in CSRName::iter() {
+            map.insert(name as u64, 0u64);
+        }
+        map.insert(CSRName::mstatus as u64, 0xa00001800);
+        Self(map)
+    }
+}
+
+impl Display for CSR {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut s = String::new();
+        for reg in CSRName::iter() {
+            let name: &'static str = reg.into();
+            s.push_str(format!("{}: {:#x}\n", name, self[reg]).as_str())
+        }
+        write!(f, "{}", s)
     }
 }
 
 pub enum MCauseCode {
     Breakpoint = 3,
+    ECallM = 11,
 }
 
 #[allow(non_camel_case_types)]
@@ -59,14 +93,17 @@ pub enum RegName {
     t4,
     t5,
     t6,
-    fake_zero
+    fake_zero,
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug, Copy, Clone, EnumIter, EnumString)]
+#[derive(Debug, Copy, Clone, EnumIter, EnumString, IntoStaticStr)]
 pub enum CSRName {
-    mepc,
-    mcause,
+    mstatus = 0x300,
+    mtvec = 0x305,
+
+    mepc = 0x341,
+    mcause = 0x342,
 }
 
 pub fn format_regs(regs: &[u64], pc: u64) -> String {
@@ -107,11 +144,11 @@ impl IndexMut<RegName> for Registers {
     }
 }
 
-impl Index<u8> for CSR {
+impl Index<u64> for CSR {
     type Output = Reg;
 
-    fn index(&self, index: u8) -> &Self::Output {
-        &self.0[index as usize]
+    fn index(&self, index: u64) -> &Self::Output {
+        &self.0[&index]
     }
 }
 
@@ -119,18 +156,18 @@ impl Index<CSRName> for CSR {
     type Output = Reg;
 
     fn index(&self, index: CSRName) -> &Self::Output {
-        unsafe { self.0.get_unchecked(index as usize) }
+        &self.0[&(index as u64)]
     }
 }
 
-impl IndexMut<u8> for CSR {
-    fn index_mut(&mut self, index: u8) -> &mut Self::Output {
-        &mut self.0[index as usize]
+impl IndexMut<u64> for CSR {
+    fn index_mut(&mut self, index: u64) -> &mut Self::Output {
+        self.0.get_mut(&(index)).unwrap()
     }
 }
 
 impl IndexMut<CSRName> for CSR {
     fn index_mut(&mut self, index: CSRName) -> &mut Self::Output {
-        unsafe { self.0.get_unchecked_mut(index as usize) }
+        self.0.get_mut(&(index as u64)).unwrap()
     }
 }

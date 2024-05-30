@@ -10,7 +10,7 @@ use sdl2::event::Event;
 use sdl2::pixels::PixelFormatEnum;
 
 use crate::device::keyboard::{Keyboard, KEYBOARD_MMIO_START};
-use crate::device::serial::{Serial, SERIAL_MMIO_START};
+use crate::device::serial::{Serial, SERIAL_MMIO_START, SERIAL_MMIO_START_QEMU};
 use crate::device::timer::{Timer, TIMER_MMIO_START};
 use crate::device::vga::{SCREEN_H, SCREEN_W, VGA, VGA_CTL_MMIO_START, VGA_FRAME_BUF_MMIO_START, VGACtrl};
 use crate::memory::Memory;
@@ -44,6 +44,7 @@ impl Devices {
         memory.add_mmio(VGA_CTL_MMIO_START, vga_ctrl.clone());
         memory.add_mmio(KEYBOARD_MMIO_START, keyboard.clone());
         memory.add_mmio(SERIAL_MMIO_START, serial.clone());
+        memory.add_mmio(SERIAL_MMIO_START_QEMU, serial.clone());
         memory.add_mmio(TIMER_MMIO_START, timer.clone());
 
         let update_thread = thread::spawn(move || {

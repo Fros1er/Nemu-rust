@@ -1,6 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
+
 use sdl2::keyboard::Keycode;
+use strum_macros::IntoStaticStr;
+
 use crate::memory::IOMap;
 use crate::memory::paddr::PAddr;
 use crate::memory::vaddr::MemOperationSize;
@@ -10,7 +13,7 @@ pub const KEYBOARD_MMIO_START: PAddr = PAddr::new(0xa0000060);
 macro_rules! build_keymap {
     ($($body:ident),*) => {
         #[repr(u32)]
-        #[derive(Clone)]
+        #[derive(Clone, IntoStaticStr, PartialEq)]
         enum NemuKeycode {
             None,
             $($body,)*
@@ -37,6 +40,7 @@ build_keymap! {
 
 pub struct Keyboard {
     keycode_map: HashMap<Keycode, NemuKeycode>,
+    key_queue: Mutex<VecDeque<u32>>,
     mem: Mutex<[u8; 8]>,
 }
 
@@ -45,24 +49,54 @@ impl Keyboard {
         let keycode_map = build_keymap();
         Self {
             keycode_map,
+            key_queue: Mutex::new(VecDeque::new()),
             mem: Mutex::new([0; 8]), // mem[3:0]: keycode, mem[7:4]: write anything to set keycode to none
         }
     }
 
-    pub fn send_key(&self, keycode: Keycode, is_down: bool) {
-        let keycode = if let Some(keycode) = self.keycode_map.get(&keycode) {
-            let mut keycode = keycode.clone() as u32;
-            if is_down {
-                keycode |= 0x8000;
-            }
-            keycode
-        } else {
-            NemuKeycode::None as u32
-        };
+    fn write_key(&self, keycode: u32) {
         unsafe {
             let addr = self.mem.lock().unwrap().get_unchecked_mut(0) as *mut u8;
             (addr as *mut u32).write(keycode);
         }
+    }
+
+    pub fn send_key(&self, keycode: Keycode, is_down: bool) {
+        if let Some(keycode) = self.keycode_map.get(&keycode) {
+            if keycode == &NemuKeycode::P {
+                if !is_down {
+                    return;
+                }
+                let mut key_queue = self.key_queue.lock().unwrap();
+                let v = vec![
+                    NemuKeycode::S as u32 | 0x8000,
+                    NemuKeycode::A as u32 | 0x8000,
+                    NemuKeycode::S as u32,
+                    NemuKeycode::J as u32 | 0x8000,
+                    NemuKeycode::A as u32,
+                    NemuKeycode::J as u32,
+                ];
+                if key_queue.is_empty() {
+                    self.write_key(v[0]);
+                }
+                for i in v {
+                    key_queue.push_back(i);
+                    println!("Macro: {}", i);
+                }
+                return
+            }
+            let s: &'static str = keycode.into();
+            println!("{} {}", s, is_down);
+            let mut keycode = keycode.clone() as u32;
+            if is_down {
+                keycode |= 0x8000;
+            }
+            let mut key_queue = self.key_queue.lock().unwrap();
+            if key_queue.is_empty() {
+                self.write_key(keycode)
+            }
+            key_queue.push_back(keycode)
+        };
     }
 }
 
@@ -79,10 +113,12 @@ impl IOMap for Keyboard {
             panic!("Write to keyboard keycode is not allowed")
         }
         if data != 0 {
-            unsafe {
-                let addr = self.mem.lock().unwrap().get_unchecked_mut(0) as *mut u8;
-                (addr as *mut u32).write(NemuKeycode::None as u32);
+            let mut key_queue = self.key_queue.lock().unwrap();
+            if !key_queue.is_empty() {
+                key_queue.pop_front();
             }
+            let next = key_queue.front().unwrap_or(&(NemuKeycode::None as u32));
+            self.write_key(next.clone());
         }
     }
 }

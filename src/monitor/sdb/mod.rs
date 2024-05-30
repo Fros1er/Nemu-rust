@@ -10,6 +10,7 @@ use rustyline::DefaultEditor;
 use std::collections::HashMap;
 use cfg_if::cfg_if;
 use log::{error, info};
+use crate::memory::paddr::PAddr;
 use crate::utils::cfg_if_feat;
 
 fn unknown_sdb_command(cmd: &str) {
@@ -32,67 +33,108 @@ pub fn exec_once<T: Isa>(emulator: &mut Emulator<T>) -> (bool, bool, bool) {
     (not_halt, false, sdl_quit)
 }
 
-pub fn exec_once_dbg<T: Isa>(
-    emulator: &mut Emulator<T>,
-    watchpoints: &mut HashMap<u32, WatchPoint>,
-    breakpoints: &HashMap<u32, u64>,
-    _inst_count: u64,
-) -> (bool, bool, bool) {
-    cfg_if_feat!("difftest", {
-        if emulator.difftest_ctx.is_some() {
-            emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.step();
-        }
-    });
-
-    let (not_halt, _, sdl_quit) = exec_once(emulator);
-
-    let mut pause = false;
-
-    cfg_if_feat!("difftest", {
-        if emulator.difftest_ctx.is_some() {
-            let difftest_regs = emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.read_regs_64();
-            let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
-            if difftest_res.is_err() {
-                info!("{}", difftest_res.err().unwrap());
-                return (false, false, false);
-            }
-            info!("identical at pc {:#x}, {} inst in total", emulator.cpu.isa_get_pc(), _inst_count);
-        }
-    });
-
-
-    for (idx, watchpoint) in watchpoints.iter_mut() {
-        let eval_res = eval_expr(&watchpoint.expr, emulator);
-        if eval_res != Ok(watchpoint.prev_val) {
-            match eval_res {
-                Ok(res) => {
-                    info!("Watchpoint {}: {}", idx, watchpoint.expr_str);
-                    info!("Old value = {}", watchpoint.prev_val);
-                    info!("New value = {}", res);
-                    watchpoint.prev_val = res;
-                }
-                Err(err) => info!("{}", err),
-            }
-            pause = true;
-        }
-    }
-    for (idx, breakpoint) in breakpoints.iter() {
-        if emulator.cpu.isa_get_pc() == *breakpoint {
-            info!("Breakpoint {}: {}", idx, breakpoint);
-            pause = true;
-            break;
-        }
-    }
-    (not_halt, pause, sdl_quit)
+struct DbgContext {
+    watchpoints: HashMap<u32, WatchPoint>,
+    breakpoints: HashMap<u32, u64>,
+    inst_count: u64,
+    next_watchpoint_idx: u32,
+    next_breakpoint_idx: u32,
+    fn_trace_enable: bool,
+    prev_pc: u64
 }
 
+impl DbgContext {
+    fn new() -> Self {
+        Self {
+            watchpoints: HashMap::new(),
+            breakpoints: HashMap::new(),
+            inst_count: 0,
+            next_watchpoint_idx: 0,
+            next_breakpoint_idx: 0,
+            fn_trace_enable: false,
+            prev_pc: 0
+        }
+    }
+    fn exec_once_dbg<T: Isa>(&mut self, emulator: &mut Emulator<T>) -> (bool, bool, bool) {
+        cfg_if_feat!("difftest", {
+            if emulator.difftest_ctx.is_some() {
+                emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.step();
+            }
+        });
+
+        let pc = emulator.cpu.isa_get_pc();
+
+        let (not_halt, _, sdl_quit) = exec_once(emulator);
+
+        let inst = emulator.cpu.isa_get_prev_inst_info(&PAddr::new(pc));
+        if self.fn_trace_enable && inst.is_ok_and(|i| i.is_branch) {
+            info!("Function call at {:#x}", pc)
+        }
+        self.prev_pc = pc;
+
+        let mut pause = false;
+
+        cfg_if_feat!("difftest", {
+            if emulator.difftest_ctx.is_some() {
+                let difftest_regs = emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.read_regs_64();
+                let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
+                if difftest_res.is_err() {
+                    info!("{}", difftest_res.err().unwrap());
+                    return (false, false, false);
+                }
+                info!("identical at pc {:#x}, {} inst in total", emulator.cpu.isa_get_pc(), self.inst_count);
+            }
+        });
+
+
+        for (idx, watchpoint) in self.watchpoints.iter_mut() {
+            let eval_res = eval_expr(&watchpoint.expr, emulator);
+            if eval_res != Ok(watchpoint.prev_val) {
+                match eval_res {
+                    Ok(res) => {
+                        info!("Watchpoint {}: {}", idx, watchpoint.expr_str);
+                        info!("Old value = {}", watchpoint.prev_val);
+                        info!("New value = {}", res);
+                        watchpoint.prev_val = res;
+                    }
+                    Err(err) => info!("{}", err),
+                }
+                pause = true;
+            }
+        }
+        for (idx, breakpoint) in self.breakpoints.iter() {
+            if emulator.cpu.isa_get_pc() == *breakpoint {
+                info!("Breakpoint {}: {}", idx, breakpoint);
+                pause = true;
+                break;
+            }
+        }
+        (not_halt, pause, sdl_quit)
+    }
+
+    fn insert_watchpoint(&mut self, wp: WatchPoint, raw_expr: &str) {
+        self.watchpoints.insert(self.next_watchpoint_idx, wp);
+        info!("watchpoint {}: {}", self.next_watchpoint_idx, raw_expr);
+        self.next_watchpoint_idx += 1;
+    }
+
+    fn insert_breakpoint(&mut self, addr: u64) {
+        self.breakpoints.insert(self.next_breakpoint_idx, addr);
+        info!("breakpoint {}: {}", self.next_breakpoint_idx, addr);
+        self.next_breakpoint_idx += 1;
+    }
+}
+
+impl Drop for DbgContext {
+    fn drop(&mut self) {
+        eprintln!("prev_pc: {:#x}", self.prev_pc)
+    }
+}
+
+
 pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
+    let mut ctx = DbgContext::new();
     let mut rl = DefaultEditor::new().unwrap();
-    let mut watchpoints: HashMap<u32, WatchPoint> = HashMap::new();
-    let mut breakpoints: HashMap<u32, u64> = HashMap::new();
-    let mut next_watchpoint_idx = 0;
-    let mut next_breakpoint_idx = 0;
-    let mut inst_count = 0u64;
     loop {
         let readline = rl.readline(format!("({:#x})>> ", emulator.cpu.isa_get_pc()).as_str());
         match readline {
@@ -118,34 +160,34 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
                         }
                     }
                     'c' => loop {
-                        inst_count += 1;
-                        let (not_halt, wp_matched, sdl_quit) = exec_once_dbg(emulator, &mut watchpoints, &breakpoints, inst_count);
+                        ctx.inst_count += 1;
+                        let (not_halt, wp_matched, sdl_quit) = ctx.exec_once_dbg(emulator);
                         if !not_halt {
-                            return (inst_count, emulator.cpu.isa_get_exit_code());
+                            return (ctx.inst_count, emulator.cpu.isa_get_exit_code());
                         }
                         if sdl_quit {
-                            return (inst_count, 0);
+                            return (ctx.inst_count, 0);
                         }
                         if wp_matched {
                             break;
                         }
                     },
-                    'q' => return (inst_count, 0),
+                    'q' => return (ctx.inst_count, 0),
                     's' => {
                         // si
-                        inst_count += 1;
-                        let (not_halt, _, sdl_quit) = exec_once_dbg(emulator, &mut watchpoints, &breakpoints, inst_count);
+                        ctx.inst_count += 1;
+                        let (not_halt, _, sdl_quit) = ctx.exec_once_dbg(emulator);
                         if !not_halt {
-                            return (inst_count, emulator.cpu.isa_get_exit_code());
+                            return (ctx.inst_count, emulator.cpu.isa_get_exit_code());
                         }
                         if sdl_quit {
-                            return (inst_count, 0);
+                            return (ctx.inst_count, 0);
                         }
                     }
                     'i' => emulator.cpu.isa_reg_display(), // info r(reg) / info w(watchpoint)
                     'x' => {}                              // x N expr: mem[eval(expr)..N*4]
                     'p' => match eval(&line[1..], emulator) {
-                        Ok(val) => info!("result: {}", val),
+                        Ok(val) => info!("result: {:#x}", val),
                         Err(err) => info!("{}", err),
                     }, // p expr: eval(expr)
                     'w' => {
@@ -159,26 +201,18 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
                             })
                         });
                         match watchpoint {
-                            Ok(watchpoint) => {
-                                watchpoints.insert(next_watchpoint_idx, watchpoint);
-                                info!("watchpoint {}: {}", next_watchpoint_idx, raw_expr);
-                                next_watchpoint_idx += 1;
-                            }
+                            Ok(watchpoint) => ctx.insert_watchpoint(watchpoint, raw_expr),
                             Err(err) => info!("{}", err),
                         }
                     } // w expr: pause when mem[eval(expr)] changes
                     'b' => {
                         match u64::from_str_radix(line[1..].trim(), 16) {
-                            Ok(addr) => {
-                                breakpoints.insert(next_breakpoint_idx, addr);
-                                info!("breakpoint {}: {}", next_breakpoint_idx, addr);
-                                next_breakpoint_idx += 1;
-                            }
+                            Ok(addr) => ctx.insert_breakpoint(addr),
                             Err(err) => info!("{}", err)
                         }
                     }
                     'd' => match line[1..].parse::<u32>() {
-                        Ok(num) => match watchpoints.remove(&num) {
+                        Ok(num) => match ctx.watchpoints.remove(&num) {
                             Some(watchpoint) => info!(
                                 "Watchpoint number {} deleted, expr: {}",
                                 num, watchpoint.expr_str
@@ -187,6 +221,10 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
                         },
                         Err(err) => info!("{}", err),
                     }, // d N: delete watchpoint N
+                    't' => {
+                        ctx.fn_trace_enable = !ctx.fn_trace_enable;
+                        info!("Fn trace enable: {}", ctx.fn_trace_enable);
+                    } // fn trace toggle
 
                     _ => unknown_sdb_command(line.as_str()),
                 }
@@ -205,5 +243,5 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
             }
         }
     }
-    (inst_count, 0)
+    (ctx.inst_count, 0)
 }

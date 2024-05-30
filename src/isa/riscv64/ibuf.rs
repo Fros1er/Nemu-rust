@@ -5,7 +5,7 @@ use crate::utils::cfg_if_feat;
 
 const IBUF_ENTRY_MASK: usize = 0xffff;
 
-type BufContent = (&'static Pattern, Decode);
+pub type BufContent = (&'static Pattern, Decode);
 
 #[derive(Clone)]
 pub struct IBufEntry {
