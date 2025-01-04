@@ -163,7 +163,7 @@ impl Isa for RISCV64 {
         }
 
         if self.state.csrs[mcause] == Breakpoint as u64 {
-            info!("ebreak at pc {:#x}", self.state.pc.value() - 4);
+            info!("ebreak at pc {:#x}", self.state.csrs[mepc]);
             return false;
         }
         true

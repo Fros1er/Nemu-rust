@@ -540,7 +540,7 @@ mod tests {
         // println!("{}", test!(+));
         let pat = &PATTERNS;
         let mut pat_map = HashMap::<&str, &Pattern>::new();
-        for p in pat {
+        for p in pat as &[Pattern; 65] {
             if p.match_inst(&0x03079793u64) {
                 println!("{}", p._name);
             }
