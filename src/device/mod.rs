@@ -21,11 +21,6 @@ mod serial;
 mod timer;
 
 pub struct Devices {
-    // event_pump: EventPump,
-    // vga: Rc<RefCell<VGA>>,
-    // keyboard: Rc<RefCell<Keyboard>>,
-    // timer: Rc<RefCell<Timer>>,
-
     stopped: Arc<AtomicBool>,
     update_thread: JoinHandle<()>,
 }

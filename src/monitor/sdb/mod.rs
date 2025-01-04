@@ -28,7 +28,7 @@ pub struct WatchPoint {
 
 #[inline]
 pub fn exec_once<T: Isa>(emulator: &mut Emulator<T>) -> (bool, bool, bool) {
-    let sdl_quit = emulator.device.has_stopped();
+    let sdl_quit = emulator.device.as_ref().is_some_and(|d| d.has_stopped());
     let not_halt = emulator.cpu.isa_exec_once();
     (not_halt, false, sdl_quit)
 }
@@ -40,7 +40,7 @@ struct DbgContext {
     next_watchpoint_idx: u32,
     next_breakpoint_idx: u32,
     fn_trace_enable: bool,
-    prev_pc: u64
+    prev_pc: u64,
 }
 
 impl DbgContext {
@@ -52,7 +52,7 @@ impl DbgContext {
             next_watchpoint_idx: 0,
             next_breakpoint_idx: 0,
             fn_trace_enable: false,
-            prev_pc: 0
+            prev_pc: 0,
         }
     }
     fn exec_once_dbg<T: Isa>(&mut self, emulator: &mut Emulator<T>) -> (bool, bool, bool) {
