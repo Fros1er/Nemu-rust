@@ -75,6 +75,8 @@ OBJDUMP   = $(CROSS_COMPILE)objdump
 OBJCOPY   = $(CROSS_COMPILE)objcopy
 READELF   = $(CROSS_COMPILE)readelf
 
+$(info CC=$(CC) )
+
 ### Compilation flags
 INC_PATH += $(WORK_DIR)/include $(addsuffix /include/, $(addprefix $(AM_HOME)/, $(LIBS)))
 INCFLAGS += $(addprefix -I, $(INC_PATH))
@@ -98,7 +100,7 @@ LDFLAGS  += -z noexecstack
 
 ### Fall back to native gcc/binutils if there is no cross compiler
 ifeq ($(wildcard $(shell which $(CC))),)
-  $(info #  $(CC) not found; fall back to default gcc and binutils)
+  $(info $(CC) not found; fall back to default gcc and binutils)
   CROSS_COMPILE :=
 endif
 

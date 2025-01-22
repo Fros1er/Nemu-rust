@@ -1,4 +1,4 @@
-CROSS_COMPILE := /opt/riscv/bin/riscv64-unknown-linux-gnu-
+CROSS_COMPILE := /opt/riscv-gnu-toolchain/install/bin/riscv64-unknown-elf-
 COMMON_CFLAGS := -fno-pic -march=rv64g -mcmodel=medany -mstrict-align
 CFLAGS        += $(COMMON_CFLAGS) -static
 ASFLAGS       += $(COMMON_CFLAGS) -O0

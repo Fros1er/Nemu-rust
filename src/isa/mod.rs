@@ -2,6 +2,7 @@ use crate::memory::Memory;
 use std::cell::RefCell;
 use std::rc::Rc;
 use crate::memory::paddr::PAddr;
+use crate::memory::vaddr::VAddr;
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 
 pub(crate) mod riscv64;
@@ -30,6 +31,8 @@ pub trait Isa {
     }
 
     fn isa_get_prev_inst_info(&mut self, prev_pc: &PAddr) -> Result<InstInfo, ()>;
+
+    fn isa_disassemble_inst(&mut self, addr: &VAddr) -> String;
     // mmu
     // todo
     // interrupt/exception

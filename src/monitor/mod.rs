@@ -15,9 +15,9 @@ pub(crate) struct Args {
     /// IMAGE
     pub(crate) image: Option<String>,
 
-    /// run with SDL devices
+    /// run without SDL devices
     #[arg(short, long)]
-    pub sdl_devices: bool,
+    pub no_sdl_devices: bool,
 
     /// run with difftest
     #[arg(short, long)]

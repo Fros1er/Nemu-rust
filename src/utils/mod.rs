@@ -26,7 +26,7 @@ pub mod tests {
 
     pub fn fake_emulator() -> Emulator<RISCV64> {
         let memory = Rc::new(RefCell::new(Memory::new())); // init mem
-        let device = Some(Devices::new(memory.borrow_mut().deref_mut())); // init device
+        let device = Devices::new(memory.borrow_mut().deref_mut(), false); // init device
         let cpu = RISCV64::new(memory.clone());
         Emulator::<RISCV64> {
             cpu,

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
-
+use std::time::SystemTime;
 use sdl2::keyboard::Keycode;
 use strum_macros::IntoStaticStr;
 
@@ -38,9 +38,14 @@ build_keymap! {
     Up, Down, Left, Right, Insert, Delete, Home, End, PageUp, PageDown
 }
 
+struct KeyboardEvent {
+    keycode: u32,
+    time: SystemTime,
+}
+
 pub struct Keyboard {
     keycode_map: HashMap<Keycode, NemuKeycode>,
-    key_queue: Mutex<VecDeque<u32>>,
+    key_queue: Mutex<VecDeque<KeyboardEvent>>,
     mem: Mutex<[u8; 8]>,
 }
 
@@ -59,6 +64,27 @@ impl Keyboard {
             let addr = self.mem.lock().unwrap().get_unchecked_mut(0) as *mut u8;
             (addr as *mut u32).write(keycode);
         }
+    }
+
+    pub fn update(&self) {
+        let mut key_queue = self.key_queue.lock().unwrap();
+        let now = SystemTime::now();
+        while let Some(event) = key_queue.front() {
+            if let Ok(duration) = now.duration_since(event.time) {
+                if duration.as_millis() > 100 {
+                    key_queue.pop_front();
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        let next = match key_queue.front() {
+            Some(event) => event.keycode,
+            None => NemuKeycode::None as u32
+        };
+        self.write_key(next);
     }
 
     pub fn send_key(&self, keycode: Keycode, is_down: bool) {
@@ -80,13 +106,13 @@ impl Keyboard {
                     self.write_key(v[0]);
                 }
                 for i in v {
-                    key_queue.push_back(i);
-                    println!("Macro: {}", i);
+                    key_queue.push_back(KeyboardEvent { keycode: i, time: SystemTime::now() });
+                    // println!("Macro: {}", i);
                 }
-                return
+                return;
             }
-            let s: &'static str = keycode.into();
-            println!("{} {}", s, is_down);
+            // let s: &'static str = keycode.into();
+            // println!("{} {}", s, is_down);
             let mut keycode = keycode.clone() as u32;
             if is_down {
                 keycode |= 0x8000;
@@ -95,7 +121,7 @@ impl Keyboard {
             if key_queue.is_empty() {
                 self.write_key(keycode)
             }
-            key_queue.push_back(keycode)
+            key_queue.push_back(KeyboardEvent { keycode, time: SystemTime::now() })
         };
     }
 }
@@ -117,8 +143,11 @@ impl IOMap for Keyboard {
             if !key_queue.is_empty() {
                 key_queue.pop_front();
             }
-            let next = key_queue.front().unwrap_or(&(NemuKeycode::None as u32));
-            self.write_key(next.clone());
+            let next = match key_queue.front() {
+                Some(event) => event.keycode,
+                None => NemuKeycode::None as u32
+            };
+            self.write_key(next);
         }
     }
 }

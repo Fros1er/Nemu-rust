@@ -24,7 +24,7 @@ mod utils;
 pub struct Emulator<T: Isa> {
     cpu: T,
     memory: Rc<RefCell<Memory>>,
-    device: Option<Devices>,
+    device: Devices,
     difftest_ctx: Option<DifftestContext>,
     batch: bool,
     exitcode: u8,
@@ -36,7 +36,7 @@ impl<T: Isa> Emulator<T> {
         init_log(args.log.as_ref());
 
         let memory = Rc::new(RefCell::new(Memory::new())); // init mem
-        let device = if args.sdl_devices { Some(Devices::new(&mut *memory.borrow_mut())) } else { None }; // init device
+        let device = Devices::new(&mut *memory.borrow_mut(), args.no_sdl_devices); // init device
         let mut cpu = T::new(memory.clone());
         let _img_size = monitor::load_img(args.image.as_ref(), memory.borrow_mut().deref_mut());
 
@@ -84,9 +84,7 @@ impl<T: Isa> Emulator<T> {
         if let Some(ctx) = &mut self.difftest_ctx {
             ctx.exit();
         }
-        if let Some(device) = self.device {
-            device.stop();
-        }
+        self.device.stop();
         ExitCode::from(self.exitcode)
     }
 }

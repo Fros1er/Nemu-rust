@@ -1,6 +1,8 @@
 use lazy_static::lazy_static;
-use crate::isa::riscv64::inst::InstType::{B, I, J, R, S, U};
-use crate::isa::riscv64::reg::{MCauseCode, Reg};
+use log::info;
+use crate::isa::riscv64::csr::MCauseCode;
+use crate::isa::riscv64::inst::InstType::{B, I, J, R, S, U, Zicsr};
+use crate::isa::riscv64::reg::{Reg, RegName};
 use crate::isa::riscv64::reg::RegName::fake_zero;
 use crate::isa::riscv64::RISCV64CpuState;
 use crate::memory::vaddr::MemOperationSize::{Byte, DWORD, QWORD, WORD};
@@ -13,6 +15,7 @@ enum InstType {
     B,
     U,
     J,
+    Zicsr,
 }
 
 pub struct Pattern {
@@ -74,6 +77,11 @@ impl Pattern {
                 rd = bits!(inst, 11, 7);
                 imm = (bits!(inst, 31, 31) << 20) | (bits!(inst, 19, 12) << 12) | (bits!(inst, 20, 20) << 11) | (bits!(inst, 30, 21) << 1);
                 imm = sign_extend64(imm, 21);
+            }
+            Zicsr => {
+                rd = bits!(inst, 11, 7);
+                rs1 = bits!(inst, 19, 15);
+                imm = bits!(inst, 31, 20);
             }
         }
         if rd == 0 {
@@ -284,7 +292,7 @@ macro_rules! gen_arithmetic_uw {
 
 
 lazy_static! {
-pub static ref PATTERNS: [Pattern; 65] = [
+pub static ref PATTERNS: [Pattern; 67] = [
     // memory
     make_pattern("??????? ????? ????? 000 ????? 0000011", I, "lb", gen_load!(Byte)),
     make_pattern("??????? ????? ????? 100 ????? 0000011", I, "lbu", gen_load_u!(Byte)),
@@ -421,6 +429,7 @@ pub static ref PATTERNS: [Pattern; 65] = [
         |inst, state| {
             state.regs[inst.rd] = state.pc.value() + 4;
             state.dyn_pc = Some(VAddr::new(state.pc.value().wrapping_add(inst.imm)));
+            // info!("jal to {:#x}", state.dyn_pc.unwrap().value());
         },
     ),
     make_pattern(
@@ -430,6 +439,7 @@ pub static ref PATTERNS: [Pattern; 65] = [
         |inst, state| {
             state.dyn_pc = Some(VAddr::new(inst.src1(state).wrapping_add(inst.imm)));
             state.regs[inst.rd] = state.pc.value() + 4;
+            // info!("jalr to {:#x}", state.dyn_pc.unwrap().value());
         },
     ),
 
@@ -460,24 +470,39 @@ pub static ref PATTERNS: [Pattern; 65] = [
     ),
     // Zicsr
     make_pattern(
-        "??????? ????? ????? 001 ????? 1110011", I, "csrrw",
+        "??????? ????? ????? 001 ????? 1110011", Zicsr, "csrrw",
         |inst, state| {
-            state.regs[inst.rd] = state.csrs[inst.imm];
+            if inst.rd != RegName::zero as u64 {
+                state.regs[inst.rd] = state.csrs[inst.imm];
+            }
             state.csrs[inst.imm] = state.regs[inst.rs1];
         },
     ),
     make_pattern(
-        "??????? ????? ????? 010 ????? 1110011", I, "csrrs",
+        "??????? ????? ????? 010 ????? 1110011", Zicsr, "csrrs",
         |inst, state| {
-            state.regs[inst.rd] = state.csrs[inst.imm];
+            if inst.rd != RegName::zero as u64 {
+                state.regs[inst.rd] = state.csrs[inst.imm];
+            }
             state.csrs[inst.imm] |= state.regs[inst.rs1];
         },
     ),
     make_pattern(
-        "??????? ????? ????? 011 ????? 1110011", I, "csrrc",
+        "??????? ????? ????? 011 ????? 1110011", Zicsr, "csrrc",
         |inst, state| {
-            state.regs[inst.rd] = state.csrs[inst.imm];
+            if inst.rd != RegName::zero as u64 {
+                state.regs[inst.rd] = state.csrs[inst.imm];
+            }
             state.csrs[inst.imm] &= !state.regs[inst.rs1];
+        },
+    ),
+    make_pattern(
+        "??????? ????? ????? 101 ????? 1110011", Zicsr, "csrrwi",
+        |inst, state| {
+            if inst.rd != RegName::zero as u64 {
+                state.regs[inst.rd] = state.csrs[inst.imm];
+            }
+            state.csrs[inst.imm] = inst.rs1;
         },
     ),
 
@@ -503,6 +528,10 @@ pub static ref PATTERNS: [Pattern; 65] = [
     make_pattern(
         "0011000 00010 00000 000 00000 1110011", I, "mret",
         |_inst, state| state.ret()
+    ),
+    make_pattern(
+        "??????? ????? ????? 000 ????? 0001111", I, "fence",
+        |_inst, _state| {}
     ),
 ];
 }
@@ -540,7 +569,7 @@ mod tests {
         // println!("{}", test!(+));
         let pat = &PATTERNS;
         let mut pat_map = HashMap::<&str, &Pattern>::new();
-        for p in pat as &[Pattern; 65] {
+        for p in pat as &[Pattern; 67] {
             if p.match_inst(&0x03079793u64) {
                 println!("{}", p._name);
             }

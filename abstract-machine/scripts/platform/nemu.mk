@@ -17,26 +17,28 @@ CFLAGS += -DMAINARGS=\"$(mainargs)\"
 CFLAGS += -I$(AM_HOME)/am/src/platform/nemu/include
 .PHONY: $(AM_HOME)/am/src/platform/nemu/trm.c
 
+NEMU_HOME := "/home/froster/code/Nemu-rust"
+
 image: $(IMAGE).elf
 	@$(OBJDUMP) -d $(IMAGE).elf > $(IMAGE).txt
 	@echo + OBJCOPY "->" $(IMAGE_REL).bin
 	@$(OBJCOPY) -S --set-section-flags .bss=alloc,contents -O binary $(IMAGE).elf $(IMAGE).bin
 
 run: image
-	cp $(IMAGE).bin "/home/froster/code/remu/tests"
-	cd /home/froster/code/remu && cargo run --release --package nemu-rust --bin nemu-rust -- tests/$(NAME)-riscv64-nemu.bin
+	cp $(IMAGE).bin "$(NEMU_HOME)/tests"
+	cd $(NEMU_HOME) && cargo run --release --package nemu-rust --bin nemu-rust -- tests/$(NAME)-riscv64-nemu.bin --batch
 	# $(MAKE) -C $(NEMU_HOME) ISA=$(ISA) run ARGS="$(NEMUFLAGS)" IMG=$(IMAGE).
 
-run-batch: image
-	cp $(IMAGE).bin "/home/froster/code/remu/tests"
-	cd /home/froster/code/remu && cargo run --release --package nemu-rust --bin nemu-rust -- tests/$(NAME)-riscv64-nemu.bin --batch
+run-step: image
+	cp $(IMAGE).bin "$(NEMU_HOME)/tests"
+	cd $(NEMU_HOME) && cargo run --release --package nemu-rust --bin nemu-rust -- tests/$(NAME)-riscv64-nemu.bin
 
 run-diff: image
-	cp $(IMAGE).bin "/home/froster/code/remu/tests"
-	cd /home/froster/code/remu && cargo run --release --package nemu-rust --bin nemu-rust -- tests/$(NAME)-riscv64-nemu.bin --difftest
+	cp $(IMAGE).bin "$(NEMU_HOME)/tests"
+	cd $(NEMU_HOME) && cargo run --release --package nemu-rust --bin nemu-rust -- tests/$(NAME)-riscv64-nemu.bin --difftest
 
 objdump: image
-	/opt/riscv/bin/riscv64-unknown-elf-objdump -d $(IMAGE).elf
+	$(OBJDUMP) -d $(IMAGE).elf
 
 gdb: image
 	$(MAKE) -C $(NEMU_HOME) ISA=$(ISA) gdb ARGS="$(NEMUFLAGS)" IMG=$(IMAGE).bin

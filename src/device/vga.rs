@@ -7,8 +7,8 @@ use crate::memory::paddr::PAddr;
 use crate::memory::vaddr::MemOperationSize;
 use crate::memory::vaddr::MemOperationSize::WORD;
 
-pub const SCREEN_W: u32 = 400;
-pub const SCREEN_H: u32 = 300;
+pub const SCREEN_W: u32 = 320;
+pub const SCREEN_H: u32 = 200;
 pub const VGA_FRAME_BUF_MMIO_START: PAddr = PAddr::new(0xa1000000);
 pub const VGA_CTL_MMIO_START: PAddr = PAddr::new(0xa0000100);
 

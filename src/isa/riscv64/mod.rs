@@ -1,8 +1,6 @@
 use crate::isa::riscv64::inst::PATTERNS;
 use crate::isa::riscv64::logo::RISCV_LOGO;
-use crate::isa::riscv64::reg::CSRName::{mcause, mepc, mtvec};
-use crate::isa::riscv64::reg::MCauseCode::Breakpoint;
-use crate::isa::riscv64::reg::{CSRName, Reg, RegName, Registers, CSR, format_regs, MCauseCode};
+use crate::isa::riscv64::reg::{Reg, RegName, Registers, format_regs};
 use crate::isa::{InstInfo, Isa};
 use crate::memory::paddr::PAddr;
 use crate::memory::vaddr::MemOperationSize::DWORD;
@@ -16,6 +14,9 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::thread;
 use strum::IntoEnumIterator;
+use crate::isa::riscv64::csr::CSRName::{mcause, mepc, mtvec};
+use crate::isa::riscv64::csr::{CSRName, MCauseCode, CSR};
+use crate::isa::riscv64::csr::MCauseCode::Breakpoint;
 use crate::isa::riscv64::ibuf::SetAssociativeIBuf;
 use crate::isa::riscv64::reg::RegName::{a0, a1, a2, t0};
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
@@ -24,6 +25,7 @@ mod inst;
 mod logo;
 pub mod reg;
 mod ibuf;
+mod csr;
 
 pub(crate) struct RISCV64 {
     state: RISCV64CpuState,
@@ -54,7 +56,7 @@ impl RISCV64CpuState {
 impl Drop for RISCV64CpuState {
     fn drop(&mut self) {
         if thread::panicking() {
-            eprintln!("regs: {}\ncsrs: {}\npc: {}", self.regs, self.csrs, self.pc.value())
+            eprintln!("pc: {:#x}\nregs: {}\ncsrs: {}", self.pc.value(), self.regs, self.csrs)
         }
     }
 }
@@ -158,12 +160,13 @@ impl Isa for RISCV64 {
             Some(pc) => {
                 self.state.pc = *pc;
                 self.state.dyn_pc = None;
-            },
+            }
             None => self.state.pc.inc(DWORD),
         }
 
         if self.state.csrs[mcause] == Breakpoint as u64 {
             info!("ebreak at pc {:#x}", self.state.csrs[mepc]);
+            info!("a0: {:#x}", self.state.regs[a0]);
             return false;
         }
         true
@@ -182,6 +185,11 @@ impl Isa for RISCV64 {
         Ok(InstInfo {
             is_branch: pattern._name == "jal" || pattern._name == "jalr"
         })
+    }
+
+    fn isa_disassemble_inst(&mut self, addr: &VAddr) -> String {
+        let inst = self.state.memory.borrow().ifetch(addr, DWORD);
+        format!("inst {:#x} at addr {:#x}\nDisassembled as {}", inst, addr.value(), self.disassembler.disassemble(inst as u32, self.state.pc.value()))
     }
 
     // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr {

@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use cfg_if::cfg_if;
 use log::{error, info};
 use crate::memory::paddr::PAddr;
+use crate::memory::vaddr::VAddr;
 use crate::utils::cfg_if_feat;
 
 fn unknown_sdb_command(cmd: &str) {
@@ -28,7 +29,7 @@ pub struct WatchPoint {
 
 #[inline]
 pub fn exec_once<T: Isa>(emulator: &mut Emulator<T>) -> (bool, bool, bool) {
-    let sdl_quit = emulator.device.as_ref().is_some_and(|d| d.has_stopped());
+    let sdl_quit = emulator.device.has_stopped();
     let not_halt = emulator.cpu.isa_exec_once();
     (not_halt, false, sdl_quit)
 }
@@ -143,7 +144,8 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
                 if line.len() == 0 {
                     continue;
                 }
-                match line.trim_start().as_bytes()[0] as char {
+                let line = line.trim_start();
+                match line.as_bytes()[0] as char {
                     'h' => {
                         if line.starts_with("help") {
                             info!("help: Display information about all supported commands");
@@ -154,9 +156,10 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
                             info!("w expr: set watchpoint expr");
                             info!("b addr: set breakpoint addr");
                             info!("d N: del watchpoint N");
+                            info!("disasm: disassemble current instruction");
                             info!("q: Exit");
                         } else {
-                            unknown_sdb_command(line.as_str());
+                            unknown_sdb_command(line);
                         }
                     }
                     'c' => loop {
@@ -211,22 +214,28 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
                             Err(err) => info!("{}", err)
                         }
                     }
-                    'd' => match line[1..].parse::<u32>() {
-                        Ok(num) => match ctx.watchpoints.remove(&num) {
-                            Some(watchpoint) => info!(
+                    'd' => {
+                        if line.starts_with("disasm") {
+                            info!("{}", emulator.cpu.isa_disassemble_inst(&VAddr::new(emulator.cpu.isa_get_pc())));
+                        } else {
+                            match line[1..].parse::<u32>() {
+                                Ok(num) => match ctx.watchpoints.remove(&num) {
+                                    Some(watchpoint) => info!(
                                 "Watchpoint number {} deleted, expr: {}",
                                 num, watchpoint.expr_str
                             ),
-                            None => info!("No watchpoint number {}", num),
-                        },
-                        Err(err) => info!("{}", err),
+                                    None => info!("No watchpoint number {}", num),
+                                },
+                                Err(err) => info!("{}", err),
+                            }
+                        }
                     }, // d N: delete watchpoint N
                     't' => {
                         ctx.fn_trace_enable = !ctx.fn_trace_enable;
                         info!("Fn trace enable: {}", ctx.fn_trace_enable);
                     } // fn trace toggle
 
-                    _ => unknown_sdb_command(line.as_str()),
+                    _ => unknown_sdb_command(line),
                 }
             }
             Err(ReadlineError::Interrupted) => {

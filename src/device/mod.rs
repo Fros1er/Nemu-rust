@@ -10,7 +10,7 @@ use sdl2::event::Event;
 use sdl2::pixels::PixelFormatEnum;
 
 use crate::device::keyboard::{Keyboard, KEYBOARD_MMIO_START};
-use crate::device::serial::{Serial, SERIAL_MMIO_START, SERIAL_MMIO_START_QEMU};
+use crate::device::serial::{RVTestSerial, Serial, SERIAL_MMIO_START, SERIAL_MMIO_START_QEMU, SERIAL_MMIO_START_RVTEST};
 use crate::device::timer::{Timer, TIMER_MMIO_START};
 use crate::device::vga::{SCREEN_H, SCREEN_W, VGA, VGA_CTL_MMIO_START, VGA_FRAME_BUF_MMIO_START, VGACtrl};
 use crate::memory::Memory;
@@ -26,7 +26,7 @@ pub struct Devices {
 }
 
 impl Devices {
-    pub fn new(memory: &mut Memory) -> Self {
+    pub fn new(memory: &mut Memory, _no_sdl: bool) -> Self {
         let stopped = Arc::new(AtomicBool::new(false));
         let stopped_tmp = stopped.clone();
 
@@ -41,6 +41,9 @@ impl Devices {
         memory.add_mmio(SERIAL_MMIO_START, serial.clone());
         memory.add_mmio(SERIAL_MMIO_START_QEMU, serial.clone());
         memory.add_mmio(TIMER_MMIO_START, timer.clone());
+
+        // let rvtest_serial = Arc::new(RVTestSerial::new());
+        // memory.add_mmio(SERIAL_MMIO_START_RVTEST, rvtest_serial.clone());
 
         let update_thread = thread::spawn(move || {
             let sdl_context = sdl2::init().unwrap();
@@ -80,6 +83,8 @@ impl Devices {
                         _ => {}
                     }
                 }
+
+                keyboard.update();
                 {
                     let vga_mem = vga.mem.lock().unwrap();
                     texture.update(None, vga_mem.deref(), (SCREEN_W * 4) as usize).unwrap();
