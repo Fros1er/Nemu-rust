@@ -34,7 +34,7 @@ impl IOMapEntry {
         Self { left, right, device }
     }
     fn addr_inside(&self, paddr: &PAddr) -> bool {
-        self.left <= *paddr && *paddr <= self.right
+        self.left <= *paddr && *paddr < self.right
     }
 
     fn paddr_to_device_mem_idx(&self, paddr: &PAddr) -> usize {
@@ -85,7 +85,7 @@ impl Memory {
         if Self::in_pmem(&io_map.left) && Self::in_pmem(&io_map.right) {
             panic!("MMIO region ({:#x}, {:#x}) overlaps with pmem", io_map.left, io_map.right)
         }
-        if let Some(mmap) = self.find_iomap(&io_map.left).or(self.find_iomap(&io_map.left)) {
+        if let Some(mmap) = self.find_iomap(&io_map.left).or(self.find_iomap(&(io_map.right.clone() - 1))) {
             panic!("MMIO region ({:#x}, {:#x}) overlaps with other mmio region ({:#x} {:#x})",
                    io_map.left, io_map.right, mmap.left, mmap.right)
         }

@@ -28,6 +28,7 @@ chumsky = "0.9.3"
 cfg-if = "1.0"
 sdl2 = { version = "0.36", features = ["unsafe_textures"] }
 bitfield-struct = "0.10.0"
+chrono = "0.4.38"
 
 [profile.release]
 debug = true
