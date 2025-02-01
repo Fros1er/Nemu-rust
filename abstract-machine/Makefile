@@ -75,8 +75,6 @@ OBJDUMP   = $(CROSS_COMPILE)objdump
 OBJCOPY   = $(CROSS_COMPILE)objcopy
 READELF   = $(CROSS_COMPILE)readelf
 
-$(info CC=$(CC) )
-
 ### Compilation flags
 INC_PATH += $(WORK_DIR)/include $(addsuffix /include/, $(addprefix $(AM_HOME)/, $(LIBS)))
 INCFLAGS += $(addprefix -I, $(INC_PATH))
@@ -97,6 +95,9 @@ LDFLAGS  += -z noexecstack
 
 ### Paste in arch-specific configurations (e.g., from `scripts/x86_64-qemu.mk`)
 -include $(AM_HOME)/scripts/$(ARCH).mk
+
+
+$(info CC=$(CC) )
 
 ### Fall back to native gcc/binutils if there is no cross compiler
 ifeq ($(wildcard $(shell which $(CC))),)

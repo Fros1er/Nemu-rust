@@ -89,30 +89,6 @@ impl Keyboard {
 
     pub fn send_key(&self, keycode: Keycode, is_down: bool) {
         if let Some(keycode) = self.keycode_map.get(&keycode) {
-            if keycode == &NemuKeycode::P {
-                if !is_down {
-                    return;
-                }
-                let mut key_queue = self.key_queue.lock().unwrap();
-                let v = vec![
-                    NemuKeycode::S as u32 | 0x8000,
-                    NemuKeycode::A as u32 | 0x8000,
-                    NemuKeycode::S as u32,
-                    NemuKeycode::J as u32 | 0x8000,
-                    NemuKeycode::A as u32,
-                    NemuKeycode::J as u32,
-                ];
-                if key_queue.is_empty() {
-                    self.write_key(v[0]);
-                }
-                for i in v {
-                    key_queue.push_back(KeyboardEvent { keycode: i, time: SystemTime::now() });
-                    // println!("Macro: {}", i);
-                }
-                return;
-            }
-            // let s: &'static str = keycode.into();
-            // println!("{} {}", s, is_down);
             let mut keycode = keycode.clone() as u32;
             if is_down {
                 keycode |= 0x8000;

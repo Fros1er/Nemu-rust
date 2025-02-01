@@ -1,7 +1,7 @@
 use std::ops::Deref;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::Arc;
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -11,9 +11,9 @@ use sdl2::pixels::PixelFormatEnum;
 
 use crate::device::keyboard::{Keyboard, KEYBOARD_MMIO_START};
 use crate::device::rtc::{RTC, RTC_MMIO_START};
-use crate::device::serial::{RVTestSerial, Serial, SERIAL_MMIO_START, SERIAL_MMIO_START_QEMU, SERIAL_MMIO_START_RVTEST};
+use crate::device::serial::{Serial, SERIAL_MMIO_START, SERIAL_MMIO_START_QEMU};
 use crate::device::timer::{Timer, TIMER_MMIO_START};
-use crate::device::vga::{SCREEN_H, SCREEN_W, VGA, VGA_CTL_MMIO_START, VGA_FRAME_BUF_MMIO_START, VGACtrl};
+use crate::device::vga::{VGACtrl, SCREEN_H, SCREEN_W, VGA, VGA_CTL_MMIO_START, VGA_FRAME_BUF_MMIO_START};
 use crate::memory::Memory;
 
 mod keyboard;

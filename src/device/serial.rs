@@ -1,6 +1,5 @@
 use std::io;
 use std::io::Write;
-use log::info;
 use crate::memory::IOMap;
 use crate::memory::paddr::PAddr;
 use crate::memory::vaddr::MemOperationSize;
@@ -8,7 +7,7 @@ use crate::memory::vaddr::MemOperationSize;
 pub const SERIAL_MMIO_START: PAddr = PAddr::new(0xa00003f8);
 pub const SERIAL_MMIO_START_QEMU: PAddr = PAddr::new(0x10000000);
 
-pub const SERIAL_MMIO_START_RVTEST: PAddr = PAddr::new(0x80001000);
+// pub const SERIAL_MMIO_START_RVTEST: PAddr = PAddr::new(0x80001000);
 
 pub struct RVTestSerial {}
 impl RVTestSerial { pub fn new() -> Self { Self {} } }

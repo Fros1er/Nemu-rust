@@ -64,7 +64,7 @@ pub(crate) fn load_img(img_file: Option<&String>, memory: &mut Memory) -> usize 
             let path = Path::new(img_file);
             File::open(path)
                 .unwrap()
-                .read(&mut memory.pmem[start as usize..])
+                .read(&mut memory.pmem[start..])
                 .unwrap()
         }
     }

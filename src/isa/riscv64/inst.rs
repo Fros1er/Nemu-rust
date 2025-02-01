@@ -1,9 +1,10 @@
+#![allow(unused_imports)]
+
 use lazy_static::lazy_static;
 use log::info;
 use crate::isa::riscv64::csr::MCauseCode;
 use crate::isa::riscv64::inst::InstType::{B, I, J, R, S, U, Zicsr};
 use crate::isa::riscv64::reg::{Reg, RegName};
-use crate::isa::riscv64::reg::RegName::fake_zero;
 use crate::isa::riscv64::RISCV64CpuState;
 use crate::memory::vaddr::MemOperationSize::{Byte, DWORD, QWORD, WORD};
 use crate::memory::vaddr::VAddr;
@@ -85,7 +86,7 @@ impl Pattern {
             }
         }
         if rd == 0 {
-            rd = fake_zero as u64;
+            rd = RegName::fake_zero as u64;
         }
         Decode { rd, rs1, rs2, imm }
     }
@@ -429,7 +430,10 @@ pub static ref PATTERNS: [Pattern; 67] = [
         |inst, state| {
             state.regs[inst.rd] = state.pc.value() + 4;
             state.dyn_pc = Some(VAddr::new(state.pc.value().wrapping_add(inst.imm)));
-            // info!("jal to {:#x}", state.dyn_pc.unwrap().value());
+            if inst.rd == RegName::ra as u64 {
+                state.backtrace.push(state.pc.value() + 4);
+                // info!("call {:#x}", state.dyn_pc.unwrap().value());
+            }
         },
     ),
     make_pattern(
@@ -439,7 +443,21 @@ pub static ref PATTERNS: [Pattern; 67] = [
         |inst, state| {
             state.dyn_pc = Some(VAddr::new(inst.src1(state).wrapping_add(inst.imm)));
             state.regs[inst.rd] = state.pc.value() + 4;
-            // info!("jalr to {:#x}", state.dyn_pc.unwrap().value());
+            if inst.rs1 == RegName::ra as u64 && inst.rd == RegName::fake_zero as u64 {
+                state.backtrace.pop();
+                // info!("return to {:#x}", state.dyn_pc.unwrap().value());
+            }
+            if inst.rd == RegName::ra as u64 {
+                state.backtrace.push(state.pc.value() + 4);
+                // info!("call {:#x}", state.dyn_pc.unwrap().value());
+            }
+
+            // if let Some(addr) = state.backtrace.last() {
+            //     if state.dyn_pc.unwrap().value() == *addr {
+            //         state.backtrace.pop();
+            //     }
+            // }
+            //
         },
     ),
 

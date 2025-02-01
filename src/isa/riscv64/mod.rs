@@ -39,6 +39,7 @@ pub(crate) struct RISCV64CpuState {
     pc: VAddr,
     dyn_pc: Option<VAddr>,
     memory: Rc<RefCell<Memory>>,
+    backtrace: Vec<u64>
 }
 
 impl RISCV64CpuState {
@@ -49,6 +50,7 @@ impl RISCV64CpuState {
             pc: VAddr::new(0),
             dyn_pc: None,
             memory,
+            backtrace: Vec::new()
         }
     }
 }
@@ -56,7 +58,11 @@ impl RISCV64CpuState {
 impl Drop for RISCV64CpuState {
     fn drop(&mut self) {
         if thread::panicking() {
-            eprintln!("pc: {:#x}\nregs: {}\ncsrs: {}", self.pc.value(), self.regs, self.csrs)
+            eprintln!("pc: {:#x}\nregs: {}\ncsrs: {}", self.pc.value(), self.regs, self.csrs);
+            eprintln!("Backtrace: ");
+            for (i, addr) in self.backtrace.iter().rev().enumerate() {
+                eprintln!("#{}: {:#x}", i, addr - 4);
+            }
         }
     }
 }
@@ -80,7 +86,7 @@ const IMG: [u32; 5] = [
     0x00028823, // sb  zero,16(t0)
     0x0102c503, // lbu a0,16(t0)
     0x00100073, // ebreak (used as nemu_trap)
-    0xdeadbeef, // some data]
+    0xdeadbeef, // some data
 ];
 
 impl Isa for RISCV64 {
@@ -122,16 +128,16 @@ impl Isa for RISCV64 {
     }
 
     fn isa_get_pc(&self) -> u64 {
-        self.state.pc.value() as u64
+        self.state.pc.value()
     }
 
     #[inline]
     fn isa_exec_once(&mut self) -> bool {
         let pc_paddr: &PAddr = &(&self.state.pc).into();
-        let (pattern, decode) = match self.ibuf.get(pc_paddr) {
+        let inst = self.state.memory.borrow().ifetch(&self.state.pc, DWORD);
+        let (pattern, decode) = match self.ibuf.get(pc_paddr, inst) {
             Some(content) => content,
             None => {
-                let inst = self.state.memory.borrow().ifetch(&self.state.pc, DWORD);
                 if inst == 0x0000006f {
                     info!("dead loop at pc {:#x}", self.state.pc.value());
                     self.state.regs[a0] = 1;
@@ -149,7 +155,7 @@ impl Isa for RISCV64 {
                         return false;
                     }
                     Some(pat) => {
-                        self.ibuf.set(pc_paddr, pat, pat.decode(&inst))
+                        self.ibuf.set(pc_paddr, inst, pat, pat.decode(&inst))
                     }
                 }
             }
@@ -180,8 +186,9 @@ impl Isa for RISCV64 {
         self.ibuf.print_info();
     }
 
-    fn isa_get_prev_inst_info(&mut self, prev_pc: &PAddr) -> Result<InstInfo, ()> {
-        let (pattern, _) = self.ibuf.get(prev_pc).unwrap();
+    fn isa_get_prev_inst_info(&mut self, prev_pc: &VAddr) -> Result<InstInfo, ()> {
+        let inst = self.state.memory.borrow().ifetch(prev_pc, DWORD);
+        let (pattern, _) = self.ibuf.get(&prev_pc.into(), inst).unwrap();
         Ok(InstInfo {
             is_branch: pattern._name == "jal" || pattern._name == "jalr"
         })

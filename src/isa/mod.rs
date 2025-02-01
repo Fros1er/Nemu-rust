@@ -1,14 +1,13 @@
+use crate::memory::vaddr::VAddr;
 use crate::memory::Memory;
+use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::memory::paddr::PAddr;
-use crate::memory::vaddr::VAddr;
-use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 
 pub(crate) mod riscv64;
 
 pub struct InstInfo {
-    pub is_branch: bool
+    pub is_branch: bool,
 }
 
 pub trait Isa {
@@ -30,7 +29,7 @@ pub trait Isa {
         println!("ICache not implemented")
     }
 
-    fn isa_get_prev_inst_info(&mut self, prev_pc: &PAddr) -> Result<InstInfo, ()>;
+    fn isa_get_prev_inst_info(&mut self, prev_pc: &VAddr) -> Result<InstInfo, ()>;
 
     fn isa_disassemble_inst(&mut self, addr: &VAddr) -> String;
     // mmu

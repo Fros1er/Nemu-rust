@@ -1,18 +1,17 @@
-pub mod eval;
 pub mod difftest_qemu;
+pub mod eval;
 mod gdb_interface;
 
 use crate::isa::Isa;
+use crate::memory::vaddr::VAddr;
 use crate::monitor::sdb::eval::{eval, eval_expr, parse, Expr};
+use crate::utils::cfg_if_feat;
 use crate::Emulator;
+use cfg_if::cfg_if;
+use log::{error, info};
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::collections::HashMap;
-use cfg_if::cfg_if;
-use log::{error, info};
-use crate::memory::paddr::PAddr;
-use crate::memory::vaddr::VAddr;
-use crate::utils::cfg_if_feat;
 
 fn unknown_sdb_command(cmd: &str) {
     error!(
@@ -67,7 +66,7 @@ impl DbgContext {
 
         let (not_halt, _, sdl_quit) = exec_once(emulator);
 
-        let inst = emulator.cpu.isa_get_prev_inst_info(&PAddr::new(pc));
+        let inst = emulator.cpu.isa_get_prev_inst_info(&VAddr::new(pc));
         if self.fn_trace_enable && inst.is_ok_and(|i| i.is_branch) {
             info!("Function call at {:#x}", pc)
         }
@@ -77,16 +76,24 @@ impl DbgContext {
 
         cfg_if_feat!("difftest", {
             if emulator.difftest_ctx.is_some() {
-                let difftest_regs = emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.read_regs_64();
+                let difftest_regs = emulator
+                    .difftest_ctx
+                    .as_mut()
+                    .unwrap()
+                    .gdb_ctx
+                    .read_regs_64();
                 let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
                 if difftest_res.is_err() {
                     info!("{}", difftest_res.err().unwrap());
                     return (false, false, false);
                 }
-                info!("identical at pc {:#x}, {} inst in total", emulator.cpu.isa_get_pc(), self.inst_count);
+                info!(
+                    "identical at pc {:#x}, {} inst in total",
+                    emulator.cpu.isa_get_pc(),
+                    self.inst_count
+                );
             }
         });
-
 
         for (idx, watchpoint) in self.watchpoints.iter_mut() {
             let eval_res = eval_expr(&watchpoint.expr, emulator);
@@ -121,7 +128,7 @@ impl DbgContext {
 
     fn insert_breakpoint(&mut self, addr: u64) {
         self.breakpoints.insert(self.next_breakpoint_idx, addr);
-        info!("breakpoint {}: {}", self.next_breakpoint_idx, addr);
+        info!("breakpoint {}: {:#x}", self.next_breakpoint_idx, addr);
         self.next_breakpoint_idx += 1;
     }
 }
@@ -131,7 +138,6 @@ impl Drop for DbgContext {
         eprintln!("prev_pc: {:#x}", self.prev_pc)
     }
 }
-
 
 pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
     let mut ctx = DbgContext::new();
@@ -208,28 +214,31 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
                             Err(err) => info!("{}", err),
                         }
                     } // w expr: pause when mem[eval(expr)] changes
-                    'b' => {
-                        match u64::from_str_radix(line[1..].trim(), 16) {
-                            Ok(addr) => ctx.insert_breakpoint(addr),
-                            Err(err) => info!("{}", err)
-                        }
-                    }
+                    'b' => match u64::from_str_radix(line[1..].trim(), 16) {
+                        Ok(addr) => ctx.insert_breakpoint(addr),
+                        Err(err) => info!("{}", err),
+                    },
                     'd' => {
                         if line.starts_with("disasm") {
-                            info!("{}", emulator.cpu.isa_disassemble_inst(&VAddr::new(emulator.cpu.isa_get_pc())));
+                            info!(
+                                "{}",
+                                emulator
+                                    .cpu
+                                    .isa_disassemble_inst(&VAddr::new(emulator.cpu.isa_get_pc()))
+                            );
                         } else {
                             match line[1..].parse::<u32>() {
                                 Ok(num) => match ctx.watchpoints.remove(&num) {
                                     Some(watchpoint) => info!(
-                                "Watchpoint number {} deleted, expr: {}",
-                                num, watchpoint.expr_str
-                            ),
+                                        "Watchpoint number {} deleted, expr: {}",
+                                        num, watchpoint.expr_str
+                                    ),
                                     None => info!("No watchpoint number {}", num),
                                 },
                                 Err(err) => info!("{}", err),
                             }
                         }
-                    }, // d N: delete watchpoint N
+                    } // d N: delete watchpoint N
                     't' => {
                         ctx.fn_trace_enable = !ctx.fn_trace_enable;
                         info!("Fn trace enable: {}", ctx.fn_trace_enable);

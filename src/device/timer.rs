@@ -10,7 +10,7 @@ use crate::memory::IOMap;
 use crate::memory::paddr::PAddr;
 use crate::memory::vaddr::MemOperationSize;
 
-pub const TIMER_MMIO_START: PAddr = PAddr::new(0xa0000040);
+pub const TIMER_MMIO_START: PAddr = PAddr::new(0xa0000048);
 
 pub struct Timer {
     // mem: Arc<AtomicU64>,
