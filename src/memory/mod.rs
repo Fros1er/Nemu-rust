@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use crate::memory::paddr::{init_mem, PAddr, PMEM_LEFT, PMEM_RIGHT};
-use crate::memory::vaddr::MemOperationSize;
-use crate::utils::configs::CONFIG_MSIZE;
+use crate::isa::riscv64::vaddr::MemOperationSize;
+use crate::memory::paddr::{init_mem, PAddr, FIRMWARE_LEFT, FIRMWARE_RIGHT, PMEM_LEFT, PMEM_RIGHT};
+use crate::utils::configs::{CONFIG_MEM_SIZE, CONFIG_FIRMWARE_SIZE};
 
 pub mod paddr;
-pub mod vaddr;
 
 pub trait IOMap {
     fn len(&self) -> usize;
@@ -31,7 +30,11 @@ pub struct IOMapEntry {
 
 impl IOMapEntry {
     fn new(left: PAddr, right: PAddr, device: Arc<dyn IOMap>) -> Self {
-        Self { left, right, device }
+        Self {
+            left,
+            right,
+            device,
+        }
     }
     fn addr_inside(&self, paddr: &PAddr) -> bool {
         self.left <= *paddr && *paddr < self.right
@@ -44,6 +47,7 @@ impl IOMapEntry {
 }
 
 pub struct Memory {
+    pub firmware: Box<[u8]>,
     pub pmem: Box<[u8]>,
     mmio: Vec<IOMapEntry>,
 }
@@ -52,13 +56,18 @@ impl Memory {
     pub fn new() -> Self {
         init_mem();
         Self {
-            pmem: vec![0u8; CONFIG_MSIZE as usize].into_boxed_slice(),
-            mmio: vec!(),
+            firmware: vec![0u8; CONFIG_FIRMWARE_SIZE as usize].into_boxed_slice(),
+            pmem: vec![0u8; CONFIG_MEM_SIZE as usize].into_boxed_slice(),
+            mmio: vec![],
         }
     }
 
+    pub fn in_firmware(paddr: &PAddr) -> bool {
+        FIRMWARE_LEFT <= *paddr && *paddr <= *FIRMWARE_RIGHT
+    }
+
     pub fn in_pmem(paddr: &PAddr) -> bool {
-        PMEM_LEFT <= *paddr && PMEM_RIGHT.value() >= paddr.value()
+        PMEM_LEFT <= *paddr && *paddr <= *PMEM_RIGHT
     }
 
     pub fn find_iomap(&self, paddr: &PAddr) -> Option<&IOMapEntry> {
@@ -83,11 +92,19 @@ impl Memory {
         let right = left.clone() + device.len() as u64;
         let io_map = IOMapEntry::new(left, right, device);
         if Self::in_pmem(&io_map.left) && Self::in_pmem(&io_map.right) {
-            panic!("MMIO region ({:#x}, {:#x}) overlaps with pmem", io_map.left, io_map.right)
+            panic!(
+                "MMIO region ({:#x}, {:#x}) overlaps with pmem",
+                io_map.left, io_map.right
+            )
         }
-        if let Some(mmap) = self.find_iomap(&io_map.left).or(self.find_iomap(&(io_map.right.clone() - 1))) {
-            panic!("MMIO region ({:#x}, {:#x}) overlaps with other mmio region ({:#x} {:#x})",
-                   io_map.left, io_map.right, mmap.left, mmap.right)
+        if let Some(mmap) = self
+            .find_iomap(&io_map.left)
+            .or(self.find_iomap(&(io_map.right.clone() - 1)))
+        {
+            panic!(
+                "MMIO region ({:#x}, {:#x}) overlaps with other mmio region ({:#x} {:#x})",
+                io_map.left, io_map.right, mmap.left, mmap.right
+            )
         }
         self.mmio.push(io_map)
     }

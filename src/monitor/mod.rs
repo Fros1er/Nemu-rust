@@ -1,9 +1,8 @@
 pub mod sdb;
 
 use crate::memory::Memory;
-use crate::utils::configs::{CONFIG_MBASE, CONFIG_PC_RESET_OFFSET};
 use clap::Parser;
-use log::{info, LevelFilter};
+use log::LevelFilter;
 use simplelog::{Config, SimpleLogger, WriteLogger};
 use std::fs::File;
 use std::io::Read;
@@ -13,7 +12,10 @@ use std::path::Path;
 #[command(version, about, long_about = None)]
 pub(crate) struct Args {
     /// IMAGE
-    pub(crate) image: Option<String>,
+    pub(crate) image: String,
+
+    /// Firmware
+    pub(crate) firmware: Option<String>,
 
     /// run without SDL devices
     #[arg(short, long)]
@@ -53,21 +55,17 @@ pub fn init_log(log_file: Option<&String>) {
     .expect("Failed to create logger.");
 }
 
-pub(crate) fn load_img(img_file: Option<&String>, memory: &mut Memory) -> usize {
-    match img_file {
-        None => {
-            info!("No image is given. Use the default build-in image.");
-            4096
-        }
-        Some(img_file) => {
-            let start = (CONFIG_MBASE + CONFIG_PC_RESET_OFFSET).to_host_arr_index();
-            let path = Path::new(img_file);
-            File::open(path)
-                .unwrap()
-                .read(&mut memory.pmem[start..])
-                .unwrap()
-        }
-    }
+pub(crate) fn load_firmware(img_file: &String, memory: &mut Memory) -> usize {
+    let path = Path::new(img_file);
+    File::open(path)
+        .unwrap()
+        .read(&mut memory.firmware)
+        .unwrap()
+}
+
+pub(crate) fn load_img(img_file: &String, memory: &mut Memory) -> usize {
+    let path = Path::new(img_file);
+    File::open(path).unwrap().read(&mut memory.pmem).unwrap()
 }
 
 // pub fn init_monitor<U: CPUState, T: Isa<U>>() -> T {

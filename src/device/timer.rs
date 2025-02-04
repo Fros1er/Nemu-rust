@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use crate::memory::IOMap;
 use crate::memory::paddr::PAddr;
-use crate::memory::vaddr::MemOperationSize;
+use crate::isa::riscv64::vaddr::MemOperationSize;
 
 pub const TIMER_MMIO_START: PAddr = PAddr::new(0xa0000048);
 

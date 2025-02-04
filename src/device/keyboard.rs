@@ -1,12 +1,12 @@
+use sdl2::keyboard::Keycode;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use std::time::SystemTime;
-use sdl2::keyboard::Keycode;
 use strum_macros::IntoStaticStr;
 
-use crate::memory::IOMap;
+use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::PAddr;
-use crate::memory::vaddr::MemOperationSize;
+use crate::memory::IOMap;
 
 pub const KEYBOARD_MMIO_START: PAddr = PAddr::new(0xa0000060);
 
@@ -82,7 +82,7 @@ impl Keyboard {
         }
         let next = match key_queue.front() {
             Some(event) => event.keycode,
-            None => NemuKeycode::None as u32
+            None => NemuKeycode::None as u32,
         };
         self.write_key(next);
     }
@@ -97,7 +97,10 @@ impl Keyboard {
             if key_queue.is_empty() {
                 self.write_key(keycode)
             }
-            key_queue.push_back(KeyboardEvent { keycode, time: SystemTime::now() })
+            key_queue.push_back(KeyboardEvent {
+                keycode,
+                time: SystemTime::now(),
+            })
         };
     }
 }
@@ -121,7 +124,7 @@ impl IOMap for Keyboard {
             }
             let next = match key_queue.front() {
                 Some(event) => event.keycode,
-                None => NemuKeycode::None as u32
+                None => NemuKeycode::None as u32,
             };
             self.write_key(next);
         }

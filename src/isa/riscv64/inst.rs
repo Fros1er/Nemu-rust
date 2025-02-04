@@ -1,13 +1,13 @@
 #![allow(unused_imports)]
 
+use crate::isa::riscv64::csr::MCauseCode;
+use crate::isa::riscv64::inst::InstType::{Zicsr, B, I, J, R, S, U};
+use crate::isa::riscv64::reg::{Reg, RegName};
+use crate::isa::riscv64::vaddr::MemOperationSize::{Byte, DWORD, QWORD, WORD};
+use crate::isa::riscv64::vaddr::{MemOperationSize, VAddr};
+use crate::isa::riscv64::RISCV64CpuState;
 use lazy_static::lazy_static;
 use log::info;
-use crate::isa::riscv64::csr::MCauseCode;
-use crate::isa::riscv64::inst::InstType::{B, I, J, R, S, U, Zicsr};
-use crate::isa::riscv64::reg::{Reg, RegName};
-use crate::isa::riscv64::RISCV64CpuState;
-use crate::memory::vaddr::MemOperationSize::{Byte, DWORD, QWORD, WORD};
-use crate::memory::vaddr::VAddr;
 
 enum InstType {
     R,
@@ -67,7 +67,10 @@ impl Pattern {
             B => {
                 rs1 = bits!(inst, 19, 15);
                 rs2 = bits!(inst, 24, 20);
-                imm = (bits!(inst, 31, 31) << 12) | (bits!(inst, 7, 7) << 11) | (bits!(inst, 30, 25) << 5) | (bits!(inst, 11, 8) << 1);
+                imm = (bits!(inst, 31, 31) << 12)
+                    | (bits!(inst, 7, 7) << 11)
+                    | (bits!(inst, 30, 25) << 5)
+                    | (bits!(inst, 11, 8) << 1);
                 imm = sign_extend64(imm, 13);
             }
             U => {
@@ -76,7 +79,10 @@ impl Pattern {
             }
             J => {
                 rd = bits!(inst, 11, 7);
-                imm = (bits!(inst, 31, 31) << 20) | (bits!(inst, 19, 12) << 12) | (bits!(inst, 20, 20) << 11) | (bits!(inst, 30, 21) << 1);
+                imm = (bits!(inst, 31, 31) << 20)
+                    | (bits!(inst, 19, 12) << 12)
+                    | (bits!(inst, 20, 20) << 11)
+                    | (bits!(inst, 30, 21) << 1);
                 imm = sign_extend64(imm, 21);
             }
             Zicsr => {
@@ -138,6 +144,9 @@ impl Decode {
     fn src2_i32(&self, state: &RISCV64CpuState) -> i32 {
         state.regs[self.rs2] as i32
     }
+    fn src2_trunc32(&self, state: &RISCV64CpuState) -> u64 {
+        (state.regs[self.rs2] as u32) as u64
+    }
 }
 
 fn make_pattern(
@@ -191,21 +200,24 @@ fn sign_ext_32to64(src: u64) -> u64 {
 
 macro_rules! gen_load_u {
     ($size:expr) => {
-        |inst, state| {
-            state.regs[inst.rd] = state
-                .memory
-                .borrow()
-                .read(&VAddr::new(inst.imm.wrapping_add(inst.src1(state))), $size)
+        |inst, state| match state
+            .memory
+            .read(&VAddr::new(inst.imm.wrapping_add(inst.src1(state))), $size)
+        {
+            Some(v) => state.regs[inst.rd] = v,
+            None => state.trap(MCauseCode::LoadAccessFault),
         }
     };
 }
 
 macro_rules! gen_load {
     ($size:expr) => {
-        |inst, state| {
-            state.regs[inst.rd] = sign_extend64(
-                state.memory.borrow()
-                .read(&VAddr::new(inst.imm.wrapping_add(inst.src1(state))), $size), 8 * $size as usize);
+        |inst, state| match state
+            .memory
+            .read(&VAddr::new(inst.imm.wrapping_add(inst.src1(state))), $size)
+        {
+            Some(v) => state.regs[inst.rd] = sign_extend64(v, 8 * $size as usize),
+            None => state.trap(MCauseCode::LoadAccessFault),
         }
     };
 }
@@ -213,11 +225,17 @@ macro_rules! gen_load {
 macro_rules! gen_store {
     ($size:expr) => {
         |inst, state| {
-            state.memory.borrow_mut().write(
+            if state
+                .memory
+                .write(
                     &VAddr::new(inst.imm.wrapping_add(inst.src1(state))),
                     inst.src2(state),
                     $size,
-                );
+                )
+                .is_err()
+            {
+                state.trap(MCauseCode::StoreAMOAccessFault)
+            }
         }
     };
 }
@@ -277,23 +295,53 @@ macro_rules! gen_arithmetic_u {
 macro_rules! gen_arithmetic_w {
     ($op: tt) => {
         |inst, state| {
-            state.regs[inst.rd] = sign_ext_32to64(inst.src1_i32(state).$op(inst.src2_i32(state)) as u64);
+            state.regs[inst.rd] =
+                sign_ext_32to64(inst.src1_i32(state).$op(inst.src2_i32(state)) as u64);
         }
     };
 }
-
 
 macro_rules! gen_arithmetic_uw {
     ($op: tt) => {
         |inst, state| {
-            state.regs[inst.rd] = sign_ext_32to64(inst.src1_u32(state).$op(inst.src2_u32(state)) as u64);
+            state.regs[inst.rd] =
+                sign_ext_32to64(inst.src1_u32(state).$op(inst.src2_u32(state)) as u64);
         }
     };
 }
 
+macro_rules! gen_zaamo {
+    // ignore_op is for amoswap
+    ($op: tt, $size: expr, $ignore_op: expr) => {
+        |inst, state| {
+            // Atomically, let t be the value of the memory word at address x[rs1],
+            // then set this memory word to the bitwise AND of t and x[rs2].
+            // Set x[rd] to the sign extension of t
+
+            // t = mem[rs1]; mem[rs1] = t op reg[rs2]; reg[rd] = t;
+            let addr = VAddr::new(inst.src1(state));
+            if !state.memory.is_aligned(&addr, $size) {
+                state.trap(MCauseCode::StoreAMOMisaligned);
+                return;
+            }
+            match state.memory.read(&addr, $size) {
+                Some(v) => {
+                    let src2 = if $size == WORD { inst.src2_trunc32(state) } else { inst.src2(state) };
+                    let res = if $ignore_op { src2 } else { v $op src2 };
+                    if state.memory.write(&addr, res, $size).is_err() {
+                        state.trap(MCauseCode::StoreAMOAccessFault);
+                    } else {
+                        state.regs[inst.rd] = if $size == WORD { sign_ext_32to64(v) } else { v };
+                    }
+                }
+                None => state.trap(MCauseCode::StoreAMOAccessFault),
+            }
+        }
+    };
+}
 
 lazy_static! {
-pub static ref PATTERNS: [Pattern; 67] = [
+pub static ref PATTERNS: [Pattern;70] = [
     // memory
     make_pattern("??????? ????? ????? 000 ????? 0000011", I, "lb", gen_load!(Byte)),
     make_pattern("??????? ????? ????? 100 ????? 0000011", I, "lbu", gen_load_u!(Byte)),
@@ -490,39 +538,30 @@ pub static ref PATTERNS: [Pattern; 67] = [
     make_pattern(
         "??????? ????? ????? 001 ????? 1110011", Zicsr, "csrrw",
         |inst, state| {
-            if inst.rd != RegName::zero as u64 {
-                state.regs[inst.rd] = state.csrs[inst.imm];
-            }
-            state.csrs[inst.imm] = state.regs[inst.rs1];
+            state.regs[inst.rd] = state.csrs.set(inst.imm, state.regs[inst.rs1])
         },
     ),
     make_pattern(
         "??????? ????? ????? 010 ????? 1110011", Zicsr, "csrrs",
         |inst, state| {
-            if inst.rd != RegName::zero as u64 {
-                state.regs[inst.rd] = state.csrs[inst.imm];
-            }
-            state.csrs[inst.imm] |= state.regs[inst.rs1];
+            state.regs[inst.rd] = state.csrs.or(inst.imm, state.regs[inst.rs1])
         },
     ),
     make_pattern(
         "??????? ????? ????? 011 ????? 1110011", Zicsr, "csrrc",
         |inst, state| {
-            if inst.rd != RegName::zero as u64 {
-                state.regs[inst.rd] = state.csrs[inst.imm];
-            }
-            state.csrs[inst.imm] &= !state.regs[inst.rs1];
+            state.regs[inst.rd] = state.csrs.and(inst.imm, !state.regs[inst.rs1]);
         },
     ),
     make_pattern(
         "??????? ????? ????? 101 ????? 1110011", Zicsr, "csrrwi",
         |inst, state| {
-            if inst.rd != RegName::zero as u64 {
-                state.regs[inst.rd] = state.csrs[inst.imm];
-            }
-            state.csrs[inst.imm] = inst.rs1;
+            state.regs[inst.rd] = state.csrs.set(inst.imm, inst.rs1);
         },
     ),
+    // Zaamo, ignore aq and rl
+    make_pattern("00001 ?? ????? ????? 010 ????? 0101111", R, "amoswap.w", gen_zaamo!(+, WORD, true)),
+    make_pattern("00001 ?? ????? ????? 011 ????? 0101111", R, "amoswap.d", gen_zaamo!(+, DWORD, true)),
 
     // misc
     make_pattern(
@@ -551,6 +590,10 @@ pub static ref PATTERNS: [Pattern; 67] = [
         "??????? ????? ????? 000 ????? 0001111", I, "fence",
         |_inst, _state| {}
     ),
+    make_pattern(
+        "??????? ????? ????? 001 ????? 0001111", I, "fence.i",
+        |_inst, _state| {}
+    ),
 ];
 }
 
@@ -558,8 +601,8 @@ pub static ref PATTERNS: [Pattern; 67] = [
 mod tests {
     use std::collections::HashMap;
 
-    use crate::isa::riscv64::inst::{make_pattern, Pattern, PATTERNS};
     use crate::isa::riscv64::inst::InstType::J;
+    use crate::isa::riscv64::inst::{make_pattern, Pattern, PATTERNS};
 
     #[test]
     fn decode_j_test() {
@@ -587,7 +630,7 @@ mod tests {
         // println!("{}", test!(+));
         let pat = &PATTERNS;
         let mut pat_map = HashMap::<&str, &Pattern>::new();
-        for p in pat as &[Pattern; 67] {
+        for p in pat as &[Pattern; 70] {
             if p.match_inst(&0x03079793u64) {
                 println!("{}", p._name);
             }

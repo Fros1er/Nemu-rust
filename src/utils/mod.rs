@@ -20,17 +20,13 @@ pub mod tests {
     use crate::isa::Isa;
     use crate::memory::Memory;
     use crate::Emulator;
-    use std::cell::RefCell;
-    use std::ops::DerefMut;
-    use std::rc::Rc;
 
     pub fn fake_emulator() -> Emulator<RISCV64> {
-        let memory = Rc::new(RefCell::new(Memory::new())); // init mem
-        let device = Devices::new(memory.borrow_mut().deref_mut(), false); // init device
-        let cpu = RISCV64::new(memory.clone());
+        let mut memory = Memory::new(); // init mem
+        let device = Devices::new(&mut memory, false); // init device
+        let cpu = RISCV64::new(memory);
         Emulator::<RISCV64> {
             cpu,
-            memory,
             device,
             difftest_ctx: None,
             batch: false,

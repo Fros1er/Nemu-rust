@@ -2,8 +2,8 @@ pub mod difftest_qemu;
 pub mod eval;
 mod gdb_interface;
 
+use crate::isa::riscv64::vaddr::VAddr;
 use crate::isa::Isa;
-use crate::memory::vaddr::VAddr;
 use crate::monitor::sdb::eval::{eval, eval_expr, parse, Expr};
 use crate::utils::cfg_if_feat;
 use crate::Emulator;
@@ -66,10 +66,6 @@ impl DbgContext {
 
         let (not_halt, _, sdl_quit) = exec_once(emulator);
 
-        let inst = emulator.cpu.isa_get_prev_inst_info(&VAddr::new(pc));
-        if self.fn_trace_enable && inst.is_ok_and(|i| i.is_branch) {
-            info!("Function call at {:#x}", pc)
-        }
         self.prev_pc = pc;
 
         let mut pause = false;

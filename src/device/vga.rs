@@ -4,8 +4,8 @@ use std::sync::Mutex;
 
 use crate::memory::IOMap;
 use crate::memory::paddr::PAddr;
-use crate::memory::vaddr::MemOperationSize;
-use crate::memory::vaddr::MemOperationSize::WORD;
+use crate::isa::riscv64::vaddr::MemOperationSize;
+use crate::isa::riscv64::vaddr::MemOperationSize::WORD;
 
 pub const SCREEN_W: u32 = 320;
 pub const SCREEN_H: u32 = 200;

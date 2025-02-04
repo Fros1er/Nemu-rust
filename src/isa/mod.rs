@@ -1,17 +1,12 @@
-use crate::memory::vaddr::VAddr;
+use riscv64::vaddr::VAddr;
 use crate::memory::Memory;
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
-use std::cell::RefCell;
-use std::rc::Rc;
+use crate::isa::riscv64::vaddr::MemOperationSize;
 
 pub(crate) mod riscv64;
 
-pub struct InstInfo {
-    pub is_branch: bool,
-}
-
 pub trait Isa {
-    fn new(memory: Rc<RefCell<Memory>>) -> Self;
+    fn new(memory: Memory) -> Self;
 
     // monitor
     fn isa_logo() -> &'static [u8];
@@ -29,10 +24,11 @@ pub trait Isa {
         println!("ICache not implemented")
     }
 
-    fn isa_get_prev_inst_info(&mut self, prev_pc: &VAddr) -> Result<InstInfo, ()>;
+    // fn isa_get_prev_inst_info(&mut self, prev_pc: &VAddr) -> Result<InstInfo, ()>;
 
     fn isa_disassemble_inst(&mut self, addr: &VAddr) -> String;
     // mmu
+    fn read_vaddr(&mut self, addr: &VAddr, len: MemOperationSize) -> Option<u64>;
     // todo
     // interrupt/exception
     // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr;

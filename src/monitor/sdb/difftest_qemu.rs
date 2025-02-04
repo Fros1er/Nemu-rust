@@ -34,12 +34,12 @@ pub struct DifftestInfo {
 }
 
 impl DifftestContext {
-    pub fn init(_info: DifftestInfo, _binary: Option<String>) -> Self {
+    pub fn init(_info: DifftestInfo, _binary: &String) -> Self {
         cfg_if! {
             if #[cfg(feature="difftest")] {
                 let qemu_proc = Command::new(_info.qemu_bin)
                     .args(["-M", "virt", "-m", "256M", "-nographic", "-s", "-S",
-                        "-bios", _binary.unwrap().as_str()])
+                        "-bios", _binary.as_str()])
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .spawn().unwrap();

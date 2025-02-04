@@ -20,10 +20,13 @@ cfg_if! {
         }
 
         impl LLVMDisassembler {
-            pub fn new(triple: &str) -> Self {
+            pub fn new(triple: &str, features: &str) -> Self {
+                // TODO: Feature is not working
                 use llvm_sys::target;
                 let triple_cstr = CString::new(triple).unwrap();
                 let triple = triple_cstr.as_ptr() as *const c_char;
+                let features_cstr = CString::new(features).unwrap();
+                let features = features_cstr.as_ptr() as *const c_char;
 
                 let mut inited = INITED.lock().unwrap();
                 if *inited == false {
@@ -37,6 +40,7 @@ cfg_if! {
                 let dc;
                 unsafe {
                     dc = llvm_sys::disassembler::LLVMCreateDisasm(triple, ptr::null_mut(), 0, None, None);
+                    // dc = llvm_sys::disassembler::LLVMCreateDisasmCPUFeatures(triple, ptr::null(), features, ptr::null_mut(), 0, None, None);
                 }
                 LLVMDisassembler {
                     dc,
@@ -50,7 +54,8 @@ cfg_if! {
                 let buf = self.buffer.as_mut_ptr() as *mut i8;
                 unsafe {
                     // let dc = llvm_sys::disassembler::LLVMCreateDisasm(CString::new("riscv64-unknown-linux-gnu").unwrap().as_ptr() as *const c_char, ptr::null_mut(), 0, None, None);
-                    llvm_sys::disassembler::LLVMDisasmInstruction(self.dc, inst_ptr, 4, pc, buf, 100);
+                    let l = llvm_sys::disassembler::LLVMDisasmInstruction(self.dc, inst_ptr, 4, pc, buf, 100);
+                    println!("LEN: {}", l);
                 }
                 let len = self
                     .buffer
@@ -80,7 +85,8 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut disasm = LLVMDisassembler::new("riscv64-unknown-linux-gnu");
-        println!("{}", disasm.disassemble(0x00000297, 0));
+        // let mut disasm = LLVMDisassembler::new("riscv64-unknown-linux-gnu", "rv64imafd_zicsr_zifencei");
+        let mut disasm = LLVMDisassembler::new("riscv64", "+Zaamo");
+        println!("disasm: {}", disasm.disassemble(0x918282f, 0));
     }
 }

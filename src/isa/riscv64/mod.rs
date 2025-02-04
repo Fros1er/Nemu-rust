@@ -1,31 +1,30 @@
+use crate::isa::riscv64::csr::CSRName::{mcause, mepc, mtvec};
+use crate::isa::riscv64::csr::{CSRName, CSRs, MCauseCode};
+use crate::isa::riscv64::ibuf::SetAssociativeIBuf;
 use crate::isa::riscv64::inst::PATTERNS;
 use crate::isa::riscv64::logo::RISCV_LOGO;
-use crate::isa::riscv64::reg::{Reg, RegName, Registers, format_regs};
-use crate::isa::{InstInfo, Isa};
+use crate::isa::riscv64::reg::RegName::{a0, a1, a2, a7, t0};
+use crate::isa::riscv64::reg::{format_regs, RegName, Registers};
+use crate::isa::riscv64::vaddr::{MemOperationSize, MMU};
+use crate::isa::Isa;
 use crate::memory::paddr::PAddr;
-use crate::memory::vaddr::MemOperationSize::DWORD;
-use crate::memory::vaddr::VAddr;
 use crate::memory::Memory;
-use crate::utils::configs::{CONFIG_MBASE, CONFIG_PC_RESET_OFFSET};
+use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 use crate::utils::disasm::LLVMDisassembler;
 use log::{error, info};
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::str::FromStr;
 use std::thread;
 use strum::IntoEnumIterator;
-use crate::isa::riscv64::csr::CSRName::{mcause, mepc, mtvec};
-use crate::isa::riscv64::csr::{CSRName, MCauseCode, CSR};
-use crate::isa::riscv64::csr::MCauseCode::Breakpoint;
-use crate::isa::riscv64::ibuf::SetAssociativeIBuf;
-use crate::isa::riscv64::reg::RegName::{a0, a1, a2, t0};
-use crate::monitor::sdb::difftest_qemu::DifftestInfo;
+use vaddr::MemOperationSize::DWORD;
+use vaddr::VAddr;
+use crate::utils::configs::CONFIG_FIRMWARE_BASE;
 
+mod csr;
+mod ibuf;
 mod inst;
 mod logo;
 pub mod reg;
-mod ibuf;
-mod csr;
+pub mod vaddr;
 
 pub(crate) struct RISCV64 {
     state: RISCV64CpuState,
@@ -35,22 +34,24 @@ pub(crate) struct RISCV64 {
 
 pub(crate) struct RISCV64CpuState {
     regs: Registers,
-    csrs: CSR,
+    csrs: CSRs,
     pc: VAddr,
     dyn_pc: Option<VAddr>,
-    memory: Rc<RefCell<Memory>>,
-    backtrace: Vec<u64>
+    memory: MMU,
+    backtrace: Vec<u64>,
+    stopping: bool,
 }
 
 impl RISCV64CpuState {
-    fn new(memory: Rc<RefCell<Memory>>) -> Self {
+    fn new(memory: Memory) -> Self {
         Self {
             regs: Registers::new(),
-            csrs: CSR::new(),
+            csrs: CSRs::new(),
             pc: VAddr::new(0),
             dyn_pc: None,
-            memory,
-            backtrace: Vec::new()
+            memory: MMU::new(memory),
+            backtrace: Vec::new(),
+            stopping: false,
         }
     }
 }
@@ -58,7 +59,12 @@ impl RISCV64CpuState {
 impl Drop for RISCV64CpuState {
     fn drop(&mut self) {
         if thread::panicking() {
-            eprintln!("pc: {:#x}\nregs: {}\ncsrs: {}", self.pc.value(), self.regs, self.csrs);
+            eprintln!(
+                "pc: {:#x}\nregs: {}\ncsrs: {}",
+                self.pc.value(),
+                self.regs,
+                self.csrs
+            );
             eprintln!("Backtrace: ");
             for (i, addr) in self.backtrace.iter().rev().enumerate() {
                 eprintln!("#{}: {:#x}", i, addr - 4);
@@ -69,8 +75,19 @@ impl Drop for RISCV64CpuState {
 
 impl RISCV64CpuState {
     fn trap(&mut self, cause: MCauseCode) {
-        self.csrs[mepc] = self.pc.value() as Reg;
-        self.csrs[mcause] = cause as u64;
+        let cause_name: &'static str = (&cause).into();
+        info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
+        if cause == MCauseCode::ECallM && self.regs[a7] == 93 {
+            info!("riscv-test passfail triggered");
+            if self.regs[a0] == 0 {
+                info!("test passed!");
+            } else {
+                info!("test case {} failed", self.regs[a0]);
+            }
+            self.stopping = true;
+        }
+        self.csrs.set_n(mepc, self.pc.value());
+        self.csrs.set_n(mcause, cause as u64);
         self.dyn_pc = Some(VAddr::new(self.csrs[mtvec].into()))
         // TODO
     }
@@ -81,23 +98,18 @@ impl RISCV64CpuState {
     }
 }
 
-const IMG: [u32; 5] = [
-    0x00000297, // auipc t0,0
-    0x00028823, // sb  zero,16(t0)
-    0x0102c503, // lbu a0,16(t0)
-    0x00100073, // ebreak (used as nemu_trap)
-    0xdeadbeef, // some data
-];
-
 impl Isa for RISCV64 {
-    fn new(memory: Rc<RefCell<Memory>>) -> Self {
-        let reset_addr: PAddr = CONFIG_MBASE + CONFIG_PC_RESET_OFFSET;
-        memory.borrow_mut().pmem_memcpy(&IMG, &reset_addr, 5);
+    fn new(memory: Memory) -> Self {
+        // let reset_addr: PAddr = CONFIG_MBASE + CONFIG_PC_RESET_OFFSET;
+        let reset_addr: PAddr = PAddr::new(CONFIG_FIRMWARE_BASE.value());
         let mut state = RISCV64CpuState::new(memory);
         state.pc = reset_addr.into();
         Self {
             state,
-            disassembler: LLVMDisassembler::new("riscv64-unknown-linux-gnu"),
+            disassembler: LLVMDisassembler::new(
+                "riscv64-unknown-linux-gnu",
+                "rv64imafd_zicsr_zifencei",
+            ),
             ibuf: SetAssociativeIBuf::new(),
         }
     }
@@ -133,35 +145,45 @@ impl Isa for RISCV64 {
 
     #[inline]
     fn isa_exec_once(&mut self) -> bool {
+        if self.state.stopping {
+            return false;
+        }
         let pc_paddr: &PAddr = &(&self.state.pc).into();
-        let inst = self.state.memory.borrow().ifetch(&self.state.pc, DWORD);
-        let (pattern, decode) = match self.ibuf.get(pc_paddr, inst) {
-            Some(content) => content,
-            None => {
-                if inst == 0x0000006f {
-                    info!("dead loop at pc {:#x}", self.state.pc.value());
-                    self.state.regs[a0] = 1;
-                    return false;
-                }
-                // decode exec
-                match PATTERNS
-                    .iter()
-                    .find(|p| p.match_inst(&inst))
-                {
-                    None => {
-                        error!("invalid inst: {:#x} at addr {:#x}", inst, self.state.pc.value());
-                        error!("disasm as: {}", self.disassembler.disassemble(inst as u32, self.state.pc.value()));
+        let inst = self.state.memory.read_if_tmp(&self.state.pc, DWORD);
+        if inst.is_none() {
+            self.state.trap(MCauseCode::InstAccessFault);
+        } else {
+            let inst = inst.unwrap();
+            let (pattern, decode) = match self.ibuf.get(pc_paddr, inst) {
+                Some(content) => content,
+                None => {
+                    if inst == 0x0000006f {
+                        info!("dead loop at pc {:#x}", self.state.pc.value());
                         self.state.regs[a0] = 1;
                         return false;
                     }
-                    Some(pat) => {
-                        self.ibuf.set(pc_paddr, inst, pat, pat.decode(&inst))
+                    // decode exec
+                    match PATTERNS.iter().find(|p| p.match_inst(&inst)) {
+                        None => {
+                            error!(
+                                "invalid inst: {:#x} at addr {:#x}",
+                                inst,
+                                self.state.pc.value()
+                            );
+                            error!(
+                                "disasm as: {}",
+                                self.disassembler
+                                    .disassemble(inst as u32, self.state.pc.value())
+                            );
+                            self.state.regs[a0] = 1;
+                            return false;
+                        }
+                        Some(pat) => self.ibuf.set(pc_paddr, inst, pat, pat.decode(&inst)),
                     }
                 }
-            }
-        };
-        pattern.exec(decode, &mut self.state);
-
+            };
+            pattern.exec(decode, &mut self.state);
+        }
         match &self.state.dyn_pc {
             Some(pc) => {
                 self.state.pc = *pc;
@@ -170,7 +192,7 @@ impl Isa for RISCV64 {
             None => self.state.pc.inc(DWORD),
         }
 
-        if self.state.csrs[mcause] == Breakpoint as u64 {
+        if self.state.csrs[mcause] == MCauseCode::Breakpoint as u64 {
             info!("ebreak at pc {:#x}", self.state.csrs[mepc]);
             info!("a0: {:#x}", self.state.regs[a0]);
             return false;
@@ -186,17 +208,30 @@ impl Isa for RISCV64 {
         self.ibuf.print_info();
     }
 
-    fn isa_get_prev_inst_info(&mut self, prev_pc: &VAddr) -> Result<InstInfo, ()> {
-        let inst = self.state.memory.borrow().ifetch(prev_pc, DWORD);
-        let (pattern, _) = self.ibuf.get(&prev_pc.into(), inst).unwrap();
-        Ok(InstInfo {
-            is_branch: pattern._name == "jal" || pattern._name == "jalr"
-        })
-    }
+    // fn isa_get_prev_inst_info(&mut self, prev_pc: &VAddr) -> Result<InstInfo, ()> {
+    //     let inst = self.state.memory.read(prev_pc, DWORD);
+    //     let (pattern, _) = self.ibuf.get(&prev_pc.into(), inst).unwrap();
+    //     Ok(InstInfo {
+    //         is_branch: pattern._name == "jal" || pattern._name == "jalr"
+    //     })
+    // }
 
     fn isa_disassemble_inst(&mut self, addr: &VAddr) -> String {
-        let inst = self.state.memory.borrow().ifetch(addr, DWORD);
-        format!("inst {:#x} at addr {:#x}\nDisassembled as {}", inst, addr.value(), self.disassembler.disassemble(inst as u32, self.state.pc.value()))
+        let inst = self.state.memory.read(addr, DWORD);
+        match inst {
+            Some(inst) => format!(
+                "inst {:#x} at addr {:#x}\nDisassembled as {}",
+                inst,
+                addr.value(),
+                self.disassembler
+                    .disassemble(inst as u32, self.state.pc.value())
+            ),
+            None => format!("Access Fault at addr {:#x}", addr.value()),
+        }
+    }
+
+    fn read_vaddr(&mut self, addr: &VAddr, len: MemOperationSize) -> Option<u64> {
+        self.state.memory.read(addr, len)
     }
 
     // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr {
@@ -223,21 +258,30 @@ impl Isa for RISCV64 {
 
     fn isa_difftest_check_regs(&self, difftest_regs: &Vec<u64>) -> Result<(), String> {
         if difftest_regs.len() != 33 {
-            return Err(format!("number of regs mismatch: local 33, difftest {}.",
-                               difftest_regs.len()));
+            return Err(format!(
+                "number of regs mismatch: local 33, difftest {}.",
+                difftest_regs.len()
+            ));
         }
 
         if self.state.pc.value() != difftest_regs[32] {
-            return Err(format!("pc mismatch: local {:#x}, difftest {:#x}.", self.state.pc.value(), difftest_regs[32]));
+            return Err(format!(
+                "pc mismatch: local {:#x}, difftest {:#x}.",
+                self.state.pc.value(),
+                difftest_regs[32]
+            ));
         }
 
         for i in 1..32 {
             if difftest_regs[i] != self.state.regs[i as u64] {
                 let reg_str: &str = RegName::iter().nth(i).unwrap().into();
-                return Err(format!("Reg {} is different: local {:#x}, difftest {:#x}.\nfull: {}{}",
-                                   reg_str, self.state.regs[i as u64], difftest_regs[i],
-                                   format_regs(&(self.state.regs.0), self.state.pc.value()),
-                                   format_regs(&difftest_regs[..32], difftest_regs[32]),
+                return Err(format!(
+                    "Reg {} is different: local {:#x}, difftest {:#x}.\nfull: {}{}",
+                    reg_str,
+                    self.state.regs[i as u64],
+                    difftest_regs[i],
+                    format_regs(&(self.state.regs.0), self.state.pc.value()),
+                    format_regs(&difftest_regs[..32], difftest_regs[32]),
                 ));
             }
         }
@@ -249,7 +293,7 @@ impl Isa for RISCV64 {
 #[cfg(test)]
 mod tests {
     use crate::isa::riscv64::reg::RegName::a0;
-    use crate::memory::vaddr::VAddr;
+    use crate::isa::riscv64::vaddr::VAddr;
     use crate::monitor::sdb::eval::eval;
     use crate::utils::tests::fake_emulator;
 
@@ -259,6 +303,6 @@ mod tests {
         emulator.cpu.state.regs[a0] = 114;
         emulator.cpu.state.pc = VAddr::new(514);
         let exp = "$a0 * 1000 + $pc".to_string();
-        assert_eq!(eval(exp.as_str(), &emulator).unwrap(), 114514);
+        assert_eq!(eval(exp.as_str(), &mut emulator).unwrap(), 114514);
     }
 }
