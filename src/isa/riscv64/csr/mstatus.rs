@@ -1,4 +1,5 @@
-use crate::isa::riscv64::csr::{CSRName, CSR};
+use crate::isa::riscv64::csr::CSRAccessLevel::RW;
+use crate::isa::riscv64::csr::{CSRInfo, CSRName, CSR};
 use bitfield_struct::bitfield;
 
 #[bitfield(u64)]
@@ -9,9 +10,9 @@ pub struct MStatus {
     MIE: bool, // IRQ: M mode interrupt enable
     _3: bool,
     SPIE: bool, // IRQ: When a trap is taken from privilege mode y into privilege mode x, xPIE is set to the value of xIE; xIE is set to 0; and xPP is set to y.
-    UBE: bool, // ENDIAN: 0
+    UBE: bool,  // ENDIAN: 0
     MPIE: bool, // IRQ
-    SPP: bool, // IRQ
+    SPP: bool,  // IRQ
     #[bits(2)]
     VS: usize, // 0
     #[bits(2)]
@@ -21,10 +22,10 @@ pub struct MStatus {
     #[bits(2)]
     XS: usize, // 0
     MPRV: bool, // MMU: Enable MMU even in M Mode
-    SUM: bool, // MMU: S-mode memory accesses to pages that are accessible by U-mode is permitted
-    MXR: bool, // MMU: loads from pages marked executable will succeed.
+    SUM: bool,  // MMU: S-mode memory accesses to pages that are accessible by U-mode is permitted
+    MXR: bool,  // MMU: loads from pages marked executable will succeed.
     TVM: bool, // VIRT: attempts to read or write the satp CSR or execute an SFENCE.VMA or SINVAL.VMA instruction while executing in S-mode will raise an illegal-instruction exception.
-    TW: bool, // for WFI
+    TW: bool,  // for WFI
     TSR: bool, // VIRT: illegal-instruction when sret in S mode
     #[bits(9)]
     _4: usize,
@@ -45,8 +46,8 @@ impl CSR for MStatus {
         Self(0xa00001800) // MPP=3, UXL=SXL=2
     }
 
-    fn write_mask() -> u64 {
-        0b11111100001100110101010
+    fn info() -> CSRInfo {
+        CSRInfo::new(0b11111100001100110101010, RW)
     }
 
     fn name() -> CSRName {
@@ -56,11 +57,12 @@ impl CSR for MStatus {
 
 #[cfg(test)]
 mod tests {
-    use crate::isa::riscv64::csr::CSR;
     use crate::isa::riscv64::csr::mstatus::MStatus;
+    use crate::isa::riscv64::csr::CSR;
 
     #[test]
     fn it_works() {
+        println!("{:#x}", 0b10u64 << 62 | 0b101000001000100101001);
         let tt: MStatus = MStatus::create();
         println!("{:?}", tt);
         let t = MStatus::new().with_SIE(true);

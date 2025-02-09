@@ -69,8 +69,8 @@ impl Memory {
     fn get_mem_ptr(&self, paddr: &PAddr) -> Option<*const u8> {
         if Memory::in_pmem(paddr) {
             Some(unsafe { self.pmem.get_unchecked(paddr.to_host_mem_arr_index()) })
-        } else if Memory::in_firmware(paddr) {
-            Some(unsafe { self.firmware.get_unchecked(paddr.to_host_firmware_arr_index()) })
+        // } else if Memory::in_firmware(paddr) {
+        //     Some(unsafe { self.firmware.get_unchecked(paddr.to_host_firmware_arr_index()) })
         } else {
             None
         }
@@ -79,8 +79,8 @@ impl Memory {
     fn get_mem_ptr_mut(&mut self, paddr: &PAddr) -> Option<*mut u8> {
         if Memory::in_pmem(paddr) {
             Some(unsafe { self.pmem.get_unchecked_mut(paddr.to_host_mem_arr_index()) })
-        } else if Memory::in_firmware(paddr) {
-            Some(unsafe { self.firmware.get_unchecked_mut(paddr.to_host_firmware_arr_index()) })
+        // } else if Memory::in_firmware(paddr) {
+        //     Some(unsafe { self.firmware.get_unchecked_mut(paddr.to_host_firmware_arr_index()) })
         } else {
             None
         }
@@ -90,8 +90,11 @@ impl Memory {
         if let Some(ptr) = self.get_mem_ptr(paddr) {
             return Some(len.read_sized(ptr));
         }
-        self.find_iomap(paddr)
-            .map(|iomap| iomap.device.read(iomap.paddr_to_device_mem_idx(paddr), len))
+        if let Some(iomap) = self.find_iomap(paddr) {
+            return Some(iomap.device.read(iomap.paddr_to_device_mem_idx(paddr), len))
+        }
+        info!("MEM READ ERR: {:#x}", paddr.0);
+        None
     }
 
     pub fn write(&mut self, paddr: &PAddr, data: u64, len: MemOperationSize) -> Result<(), ()> {
@@ -107,7 +110,10 @@ impl Memory {
                     .write(iomap.paddr_to_device_mem_idx(paddr), data, len);
                 Ok(())
             }
-            None => Err(()),
+            None => {
+                info!("MEM WRITE ERR: {:#x}", paddr.0);
+                Err(())
+            },
         }
     }
     // len: n elements, not n bytes!

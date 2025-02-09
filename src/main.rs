@@ -6,10 +6,9 @@ use crate::monitor::init_log;
 use crate::monitor::sdb::difftest_qemu::DifftestContext;
 use crate::monitor::sdb::{exec_once, sdb_loop};
 use crate::utils::cfg_if_feat;
-use crate::utils::configs::CONFIG_MEM_BASE;
 use cfg_if::cfg_if;
 use clap::Parser;
-use log::info;
+use log::{info, warn};
 use std::process::ExitCode;
 use std::ptr::addr_of_mut;
 
@@ -38,11 +37,12 @@ impl<T: Isa> Emulator<T> {
         let _firm_size = if let Some(path) = &args.firmware {
             monitor::load_firmware(path, &mut memory)
         } else {
-            if CONFIG_MEM_BASE.value() != 0x80000000 {
-                panic!("TODO: MANUALLY CRAFTED RISCV ASM FOR DEFAULT FIRMWARE");
-            }
+            // if CONFIG_MEM_BASE.value() != 0x80000000 {
+            //     panic!("TODO: MANUALLY CRAFTED RISCV ASM FOR DEFAULT FIRMWARE");
+            // }
+            warn!("TODO: MANUALLY CRAFTED RISCV ASM FOR DEFAULT FIRMWARE");
             let firm = [
-                0x0010029bu32, // addw	t0,zero,1 (li 0x80000000)
+                0x0810029bu32, // addw	t0,zero,1 (li 0x81000000)
                 0x01f29293,    // sll	t0,t0,0x1f
                 0x00028067,    // jr	t0
             ];
@@ -53,10 +53,13 @@ impl<T: Isa> Emulator<T> {
             firm.len() * 4
         };
         let device = Devices::new(&mut memory, args.no_sdl_devices); // init device
-        let mut cpu = T::new(memory);
+        let mut cpu = T::new(memory, &args);
 
         let difftest_ctx = if args.difftest {
-            Some(DifftestContext::init(cpu.isa_difftest_init(), &args.image))
+            Some(DifftestContext::init(
+                cpu.isa_difftest_init(),
+                &args.firmware.unwrap(),
+            ))
         } else {
             None
         };

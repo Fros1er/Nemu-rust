@@ -2,11 +2,12 @@ use riscv64::vaddr::VAddr;
 use crate::memory::Memory;
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 use crate::isa::riscv64::vaddr::MemOperationSize;
+use crate::monitor::Args;
 
 pub(crate) mod riscv64;
 
 pub trait Isa {
-    fn new(memory: Memory) -> Self;
+    fn new(memory: Memory, args: &Args) -> Self;
 
     // monitor
     fn isa_logo() -> &'static [u8];
@@ -33,6 +34,8 @@ pub trait Isa {
     // interrupt/exception
     // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr;
     // fn isa_query_interrupt() -> u64;
+    fn isa_get_backtrace(&self) -> String;
+    
     // difftest
     // fn isa_difftest_check_regs(ref_r: T, pc: VAddr) -> bool;
     fn isa_difftest_init(&mut self) -> DifftestInfo;

@@ -1,0 +1,84 @@
+/dts-v1/;
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "nemurust-unknown-dev";
+	model = "nemurust-unknown";
+	L15: cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		timebase-frequency = <250000>;
+		L4: cpu@0 {
+			clock-frequency = <0>;
+			compatible = "sifive,rocket0", "riscv";
+			device_type = "cpu";
+			mmu-type = "riscv,sv39";
+			reg = <0x0>;
+			riscv,isa = "rv64imafd";
+			riscv,pmpgranularity = <0>;
+			riscv,pmpregions = <0>;
+			status = "okay";
+			timebase-frequency = <250000>;
+			L2: interrupt-controller {
+				#interrupt-cells = <1>;
+				compatible = "riscv,cpu-intc";
+				interrupt-controller;
+			};
+		};
+	};
+	L10: memory@80000000 {
+		device_type = "memory";
+		reg = <0x80000000 0x10000000>;
+	};
+	L14: soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "freechips,rocketchip-unknown-soc", "simple-bus";
+		ranges;
+		L6: clint@2000000 {
+			compatible = "riscv,clint0";
+			interrupts-extended = <&L2 3 &L2 7>;
+			reg = <0x2000000 0x10000>;
+			reg-names = "control";
+		};
+		L1: error-device@3000 {
+			compatible = "sifive,error0";
+			reg = <0x3000 0x1000>;
+		};
+		L9: external-interrupts {
+			interrupt-parent = <&L5>;
+			interrupts = <1 2>;
+		};
+		L5: interrupt-controller@c000000 {
+			#interrupt-cells = <1>;
+			compatible = "riscv,plic0";
+			interrupt-controller;
+			interrupts-extended = <&L2 11 &L2 9>;
+			reg = <0xc000000 0x4000000>;
+			reg-names = "control";
+			riscv,max-priority = <3>;
+			riscv,ndev = <2>;
+		};
+		L11: mmio-port-axi4@60000000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "simple-bus";
+			ranges = <0x60000000 0x60000000 0x20000000>;
+		};
+		L12: rom@10000 {
+			compatible = "sifive,rom0";
+			reg = <0x10000 0x10000>;
+			reg-names = "mem";
+		};
+		L0: subsystem_pbus_clock {
+			#clock-cells = <0>;
+			clock-frequency = <25000000>;
+			clock-output-names = "subsystem_pbus_clock";
+			compatible = "fixed-clock";
+		};
+		L100: uart@a00003f8 {
+		    compatible = "litex,liteuart";
+		    reg = <0xa0000200 0x100>;
+		};
+	};
+};

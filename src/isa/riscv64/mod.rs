@@ -1,4 +1,4 @@
-use crate::isa::riscv64::csr::CSRName::{mcause, mepc, mtvec};
+use crate::isa::riscv64::csr::CSRName::{mcause, mepc, mtval, mtvec};
 use crate::isa::riscv64::csr::{CSRName, CSRs, MCauseCode};
 use crate::isa::riscv64::ibuf::SetAssociativeIBuf;
 use crate::isa::riscv64::inst::PATTERNS;
@@ -10,14 +10,16 @@ use crate::isa::Isa;
 use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
+use crate::monitor::Args;
+use crate::utils::configs::CONFIG_MEM_BASE;
 use crate::utils::disasm::LLVMDisassembler;
 use log::{error, info};
+use std::fmt::Write;
 use std::str::FromStr;
 use std::thread;
 use strum::IntoEnumIterator;
 use vaddr::MemOperationSize::DWORD;
 use vaddr::VAddr;
-use crate::utils::configs::CONFIG_FIRMWARE_BASE;
 
 mod csr;
 mod ibuf;
@@ -30,6 +32,7 @@ pub(crate) struct RISCV64 {
     state: RISCV64CpuState,
     disassembler: LLVMDisassembler,
     ibuf: SetAssociativeIBuf,
+    stop_at_ebreak: bool,
 }
 
 pub(crate) struct RISCV64CpuState {
@@ -66,17 +69,16 @@ impl Drop for RISCV64CpuState {
                 self.csrs
             );
             eprintln!("Backtrace: ");
-            for (i, addr) in self.backtrace.iter().rev().enumerate() {
-                eprintln!("#{}: {:#x}", i, addr - 4);
-            }
+            eprint!("{}", self.get_backtrace_string());
         }
     }
 }
 
 impl RISCV64CpuState {
-    fn trap(&mut self, cause: MCauseCode) {
+    fn trap(&mut self, cause: MCauseCode, mtval_val: Option<u64>) {
         let cause_name: &'static str = (&cause).into();
         info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
+
         if cause == MCauseCode::ECallM && self.regs[a7] == 93 {
             info!("riscv-test passfail triggered");
             if self.regs[a0] == 0 {
@@ -86,22 +88,39 @@ impl RISCV64CpuState {
             }
             self.stopping = true;
         }
+
         self.csrs.set_n(mepc, self.pc.value());
         self.csrs.set_n(mcause, cause as u64);
-        self.dyn_pc = Some(VAddr::new(self.csrs[mtvec].into()))
-        // TODO
+        self.dyn_pc = Some(VAddr::new(self.csrs[mtvec].into()));
+        if self.csrs[mtvec] == 0 {
+            info!("mtvec unset. Stopping.");
+            self.stopping = true;
+        }
+
+        if let Some(val) = mtval_val {
+            self.csrs.set_n(mtval, val);
+        }
     }
 
     fn ret(&mut self) {
         self.dyn_pc = Some(VAddr::new(self.csrs[mepc].into()));
         // info!("Ret mepc: {:#x}", self.csrs[mepc]);
     }
+
+    fn get_backtrace_string(&self) -> String {
+        let mut res = String::new();
+        for (i, addr) in self.backtrace.iter().rev().enumerate() {
+            write!(&mut res, "#{}: {:#x}\n", i, addr - 4).unwrap();
+        }
+        res
+    }
 }
 
 impl Isa for RISCV64 {
-    fn new(memory: Memory) -> Self {
+    fn new(memory: Memory, args: &Args) -> Self {
         // let reset_addr: PAddr = CONFIG_MBASE + CONFIG_PC_RESET_OFFSET;
-        let reset_addr: PAddr = PAddr::new(CONFIG_FIRMWARE_BASE.value());
+        let reset_addr: PAddr = PAddr::new(CONFIG_MEM_BASE.value());
+        // let reset_addr: PAddr = PAddr::new(CONFIG_FIRMWARE_BASE.value());
         let mut state = RISCV64CpuState::new(memory);
         state.pc = reset_addr.into();
         Self {
@@ -111,6 +130,7 @@ impl Isa for RISCV64 {
                 "rv64imafd_zicsr_zifencei",
             ),
             ibuf: SetAssociativeIBuf::new(),
+            stop_at_ebreak: !args.ignore_isa_breakpoint,
         }
     }
     fn isa_logo() -> &'static [u8] {
@@ -151,7 +171,8 @@ impl Isa for RISCV64 {
         let pc_paddr: &PAddr = &(&self.state.pc).into();
         let inst = self.state.memory.read_if_tmp(&self.state.pc, DWORD);
         if inst.is_none() {
-            self.state.trap(MCauseCode::InstAccessFault);
+            self.state
+                .trap(MCauseCode::InstAccessFault, Some(self.state.pc.value()));
         } else {
             let inst = inst.unwrap();
             let (pattern, decode) = match self.ibuf.get(pc_paddr, inst) {
@@ -175,6 +196,7 @@ impl Isa for RISCV64 {
                                 self.disassembler
                                     .disassemble(inst as u32, self.state.pc.value())
                             );
+                            info!("bt:\n{}", self.isa_get_backtrace());
                             self.state.regs[a0] = 1;
                             return false;
                         }
@@ -192,7 +214,7 @@ impl Isa for RISCV64 {
             None => self.state.pc.inc(DWORD),
         }
 
-        if self.state.csrs[mcause] == MCauseCode::Breakpoint as u64 {
+        if self.stop_at_ebreak && self.state.csrs[mcause] == MCauseCode::Breakpoint as u64 {
             info!("ebreak at pc {:#x}", self.state.csrs[mepc]);
             info!("a0: {:#x}", self.state.regs[a0]);
             return false;
@@ -232,6 +254,10 @@ impl Isa for RISCV64 {
 
     fn read_vaddr(&mut self, addr: &VAddr, len: MemOperationSize) -> Option<u64> {
         self.state.memory.read(addr, len)
+    }
+
+    fn isa_get_backtrace(&self) -> String {
+        self.state.get_backtrace_string()
     }
 
     // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr {

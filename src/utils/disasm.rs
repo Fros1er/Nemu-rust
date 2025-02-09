@@ -20,13 +20,13 @@ cfg_if! {
         }
 
         impl LLVMDisassembler {
-            pub fn new(triple: &str, features: &str) -> Self {
+            pub fn new(triple: &str, _features: &str) -> Self {
                 // TODO: Feature is not working
                 use llvm_sys::target;
                 let triple_cstr = CString::new(triple).unwrap();
                 let triple = triple_cstr.as_ptr() as *const c_char;
-                let features_cstr = CString::new(features).unwrap();
-                let features = features_cstr.as_ptr() as *const c_char;
+                // let features_cstr = CString::new(features).unwrap();
+                // let features = features_cstr.as_ptr() as *const c_char;
 
                 let mut inited = INITED.lock().unwrap();
                 if *inited == false {

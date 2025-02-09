@@ -19,12 +19,18 @@ pub mod tests {
     use crate::isa::riscv64::RISCV64;
     use crate::isa::Isa;
     use crate::memory::Memory;
+    use crate::monitor::Args;
     use crate::Emulator;
 
     pub fn fake_emulator() -> Emulator<RISCV64> {
         let mut memory = Memory::new(); // init mem
         let device = Devices::new(&mut memory, false); // init device
-        let cpu = RISCV64::new(memory);
+        let cpu = RISCV64::new(
+            memory,
+            &Args {
+                ..Default::default()
+            },
+        );
         Emulator::<RISCV64> {
             cpu,
             device,

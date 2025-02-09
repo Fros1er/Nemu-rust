@@ -1,6 +1,7 @@
 pub mod sdb;
 
 use crate::memory::Memory;
+use crate::utils::configs::CONFIG_FIRMWARE_SIZE;
 use clap::Parser;
 use log::LevelFilter;
 use simplelog::{Config, SimpleLogger, WriteLogger};
@@ -10,11 +11,13 @@ use std::path::Path;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-pub(crate) struct Args {
+#[derive(Default)]
+pub struct Args {
     /// IMAGE
     pub(crate) image: String,
 
     /// Firmware
+    #[arg(long)]
     pub(crate) firmware: Option<String>,
 
     /// run without SDL devices
@@ -32,13 +35,16 @@ pub(crate) struct Args {
     /// output log to FILE
     #[arg(short, long, value_name = "FILE")]
     pub(crate) log: Option<String>,
-    // /// run DiffTest with reference REF_SO
-    // #[arg(short, long, value_name = "REF_SO")]
-    // diff: String,
-    //
-    // /// run DiffTest with port PORT
-    // #[arg(short, long, value_name = "PORT")]
-    // port: i32,
+
+    /// don't stop at hardware breakpoint
+    #[arg(long)]
+    pub ignore_isa_breakpoint: bool, // /// run DiffTest with reference REF_SO
+                                     // #[arg(short, long, value_name = "REF_SO")]
+                                     // diff: String,
+                                     //
+                                     // /// run DiffTest with port PORT
+                                     // #[arg(short, long, value_name = "PORT")]
+                                     // port: i32,
 }
 
 pub fn init_log(log_file: Option<&String>) {
@@ -57,15 +63,23 @@ pub fn init_log(log_file: Option<&String>) {
 
 pub(crate) fn load_firmware(img_file: &String, memory: &mut Memory) -> usize {
     let path = Path::new(img_file);
-    File::open(path)
-        .unwrap()
-        .read(&mut memory.firmware)
-        .unwrap()
+    let mut f = File::open(path).unwrap();
+    let size = f.metadata().unwrap().len();
+    if size > CONFIG_FIRMWARE_SIZE {
+        panic!("Firm too large ({} or {:#x} bytes).", size, size);
+    }
+    // f.read(&mut memory.firmware).unwrap()
+    f.read(&mut memory.pmem).unwrap()
 }
 
 pub(crate) fn load_img(img_file: &String, memory: &mut Memory) -> usize {
     let path = Path::new(img_file);
-    File::open(path).unwrap().read(&mut memory.pmem).unwrap()
+    let mut f = File::open(path).unwrap();
+    let size = f.metadata().unwrap().len();
+    if size > CONFIG_FIRMWARE_SIZE {
+        panic!("Image too large ({} or {:#x} bytes).", size, size);
+    }
+    f.read(&mut memory.pmem[0x1000000..]).unwrap()
 }
 
 // pub fn init_monitor<U: CPUState, T: Isa<U>>() -> T {

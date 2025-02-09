@@ -94,7 +94,13 @@ impl Pattern {
         if rd == 0 {
             rd = RegName::fake_zero as u64;
         }
-        Decode { rd, rs1, rs2, imm }
+        Decode {
+            rd,
+            rs1,
+            rs2,
+            imm,
+            inst: *inst,
+        }
     }
 
     pub fn exec(&self, decode: &Decode, state: &mut RISCV64CpuState) {
@@ -108,6 +114,7 @@ pub struct Decode {
     rs1: u64,
     rs2: u64,
     imm: u64,
+    inst: u64,
 }
 
 impl Decode {
@@ -200,24 +207,24 @@ fn sign_ext_32to64(src: u64) -> u64 {
 
 macro_rules! gen_load_u {
     ($size:expr) => {
-        |inst, state| match state
-            .memory
-            .read(&VAddr::new(inst.imm.wrapping_add(inst.src1(state))), $size)
-        {
-            Some(v) => state.regs[inst.rd] = v,
-            None => state.trap(MCauseCode::LoadAccessFault),
+        |inst, state| {
+            let addr = inst.imm.wrapping_add(inst.src1(state));
+            match state.memory.read(&VAddr::new(addr), $size) {
+                Some(v) => state.regs[inst.rd] = v,
+                None => state.trap(MCauseCode::LoadAccessFault, Some(addr)),
+            }
         }
     };
 }
 
 macro_rules! gen_load {
     ($size:expr) => {
-        |inst, state| match state
-            .memory
-            .read(&VAddr::new(inst.imm.wrapping_add(inst.src1(state))), $size)
-        {
-            Some(v) => state.regs[inst.rd] = sign_extend64(v, 8 * $size as usize),
-            None => state.trap(MCauseCode::LoadAccessFault),
+        |inst, state| {
+            let addr = inst.imm.wrapping_add(inst.src1(state));
+            match state.memory.read(&VAddr::new(addr), $size) {
+                Some(v) => state.regs[inst.rd] = sign_extend64(v, 8 * $size as usize),
+                None => state.trap(MCauseCode::LoadAccessFault, Some(addr)),
+            }
         }
     };
 }
@@ -225,16 +232,13 @@ macro_rules! gen_load {
 macro_rules! gen_store {
     ($size:expr) => {
         |inst, state| {
+            let addr = inst.imm.wrapping_add(inst.src1(state));
             if state
                 .memory
-                .write(
-                    &VAddr::new(inst.imm.wrapping_add(inst.src1(state))),
-                    inst.src2(state),
-                    $size,
-                )
+                .write(&VAddr::new(addr), inst.src2(state), $size)
                 .is_err()
             {
-                state.trap(MCauseCode::StoreAMOAccessFault)
+                state.trap(MCauseCode::StoreAMOAccessFault, Some(addr))
             }
         }
     };
@@ -310,6 +314,19 @@ macro_rules! gen_arithmetic_uw {
     };
 }
 
+macro_rules! gen_zicsr {
+    ($op: tt) => {
+        |inst, state| match state.csrs.$op(
+            inst.imm,
+            state.regs[inst.rs1],
+            inst.rs1 == RegName::zero as u64,
+        ) {
+            Some(res) => state.regs[inst.rd] = res,
+            None => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
+        }
+    };
+}
+
 macro_rules! gen_zaamo {
     // ignore_op is for amoswap
     ($op: tt, $size: expr, $ignore_op: expr) => {
@@ -321,27 +338,31 @@ macro_rules! gen_zaamo {
             // t = mem[rs1]; mem[rs1] = t op reg[rs2]; reg[rd] = t;
             let addr = VAddr::new(inst.src1(state));
             if !state.memory.is_aligned(&addr, $size) {
-                state.trap(MCauseCode::StoreAMOMisaligned);
+                state.trap(MCauseCode::StoreAMOMisaligned, Some(addr.value()));
                 return;
             }
             match state.memory.read(&addr, $size) {
                 Some(v) => {
-                    let src2 = if $size == WORD { inst.src2_trunc32(state) } else { inst.src2(state) };
-                    let res = if $ignore_op { src2 } else { v $op src2 };
+                    let src2 = if $size == WORD {
+                        inst.src2_trunc32(state)
+                    } else {
+                        inst.src2(state)
+                    };
+                    let res = if $ignore_op { src2 } else { v.$op(src2) };
                     if state.memory.write(&addr, res, $size).is_err() {
-                        state.trap(MCauseCode::StoreAMOAccessFault);
+                        state.trap(MCauseCode::StoreAMOAccessFault, Some(addr.value()));
                     } else {
                         state.regs[inst.rd] = if $size == WORD { sign_ext_32to64(v) } else { v };
                     }
                 }
-                None => state.trap(MCauseCode::StoreAMOAccessFault),
+                None => state.trap(MCauseCode::StoreAMOAccessFault, Some(addr.value())),
             }
         }
     };
 }
 
 lazy_static! {
-pub static ref PATTERNS: [Pattern;70] = [
+pub static ref PATTERNS: [Pattern;72] = [
     // memory
     make_pattern("??????? ????? ????? 000 ????? 0000011", I, "lb", gen_load!(Byte)),
     make_pattern("??????? ????? ????? 100 ????? 0000011", I, "lbu", gen_load_u!(Byte)),
@@ -535,33 +556,23 @@ pub static ref PATTERNS: [Pattern;70] = [
         },
     ),
     // Zicsr
-    make_pattern(
-        "??????? ????? ????? 001 ????? 1110011", Zicsr, "csrrw",
-        |inst, state| {
-            state.regs[inst.rd] = state.csrs.set(inst.imm, state.regs[inst.rs1])
-        },
-    ),
-    make_pattern(
-        "??????? ????? ????? 010 ????? 1110011", Zicsr, "csrrs",
-        |inst, state| {
-            state.regs[inst.rd] = state.csrs.or(inst.imm, state.regs[inst.rs1])
-        },
-    ),
-    make_pattern(
-        "??????? ????? ????? 011 ????? 1110011", Zicsr, "csrrc",
-        |inst, state| {
-            state.regs[inst.rd] = state.csrs.and(inst.imm, !state.regs[inst.rs1]);
-        },
-    ),
+    make_pattern("??????? ????? ????? 001 ????? 1110011", Zicsr, "csrrw", gen_zicsr!(set)),
+    make_pattern("??????? ????? ????? 010 ????? 1110011", Zicsr, "csrrs", gen_zicsr!(or)),
+    make_pattern("??????? ????? ????? 011 ????? 1110011", Zicsr, "csrrc", gen_zicsr!(and)),
     make_pattern(
         "??????? ????? ????? 101 ????? 1110011", Zicsr, "csrrwi",
         |inst, state| {
-            state.regs[inst.rd] = state.csrs.set(inst.imm, inst.rs1);
+            match state.csrs.set(inst.imm, inst.rs1, false) {
+                Some(res) => {state.regs[inst.rd] = res}
+                None => {state.trap(MCauseCode::IllegalInst, Some(inst.inst))}
+            }
         },
     ),
     // Zaamo, ignore aq and rl
-    make_pattern("00001 ?? ????? ????? 010 ????? 0101111", R, "amoswap.w", gen_zaamo!(+, WORD, true)),
-    make_pattern("00001 ?? ????? ????? 011 ????? 0101111", R, "amoswap.d", gen_zaamo!(+, DWORD, true)),
+    make_pattern("00001 ?? ????? ????? 010 ????? 0101111", R, "amoswap.w", gen_zaamo!(wrapping_add, WORD, true)),
+    make_pattern("00001 ?? ????? ????? 011 ????? 0101111", R, "amoswap.d", gen_zaamo!(wrapping_add, DWORD, true)),
+    make_pattern("00000 ?? ????? ????? 010 ????? 0101111", R, "amoadd.w", gen_zaamo!(wrapping_add, DWORD, false)),
+    make_pattern("00000 ?? ????? ????? 011 ????? 0101111", R, "amoadd.d", gen_zaamo!(wrapping_add, DWORD, false)),
 
     // misc
     make_pattern(
@@ -572,11 +583,11 @@ pub static ref PATTERNS: [Pattern;70] = [
     ),
     make_pattern(
         "0000000 00001 00000 000 00000 1110011", I, "ebreak",
-        |_inst, state| state.trap(MCauseCode::Breakpoint),
+        |_inst, state| state.trap(MCauseCode::Breakpoint, None),
     ),
     make_pattern(
         "0000000 00000 00000 000 00000 1110011", I, "ecall",
-        |_inst, state| state.trap(MCauseCode::ECallM),
+        |_inst, state| state.trap(MCauseCode::ECallM, None),
     ),
     make_pattern(
         "0001000 00010 00000 000 00000 1110011", I, "sret",
@@ -630,7 +641,7 @@ mod tests {
         // println!("{}", test!(+));
         let pat = &PATTERNS;
         let mut pat_map = HashMap::<&str, &Pattern>::new();
-        for p in pat as &[Pattern; 70] {
+        for p in pat as &[Pattern; 72] {
             if p.match_inst(&0x03079793u64) {
                 println!("{}", p._name);
             }

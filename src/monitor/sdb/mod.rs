@@ -131,7 +131,7 @@ impl DbgContext {
 
 impl Drop for DbgContext {
     fn drop(&mut self) {
-        eprintln!("prev_pc: {:#x}", self.prev_pc)
+        eprintln!("prev_pc: {:#x}\ninst executed: {}", self.prev_pc, self.inst_count)
     }
 }
 
@@ -210,9 +210,16 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
                             Err(err) => info!("{}", err),
                         }
                     } // w expr: pause when mem[eval(expr)] changes
-                    'b' => match u64::from_str_radix(line[1..].trim(), 16) {
-                        Ok(addr) => ctx.insert_breakpoint(addr),
-                        Err(err) => info!("{}", err),
+                    'b' => {
+                        if line.starts_with("bt") {
+                            info!("backtrace:");
+                            info!("{}", emulator.cpu.isa_get_backtrace());
+                        } else {
+                            match u64::from_str_radix(line[1..].trim(), 16) {
+                                Ok(addr) => ctx.insert_breakpoint(addr),
+                                Err(err) => info!("{}", err),
+                            }
+                        }
                     },
                     'd' => {
                         if line.starts_with("disasm") {

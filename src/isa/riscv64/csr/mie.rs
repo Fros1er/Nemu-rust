@@ -1,8 +1,10 @@
-use crate::isa::riscv64::csr::{CSRName, CSR};
+use crate::isa::riscv64::csr::CSRAccessLevel::RW;
+use crate::isa::riscv64::csr::{CSRInfo, CSRName, CSR};
 use bitfield_struct::bitfield;
 
 #[bitfield(u64)]
-pub struct MIP { // TODO: Interrupt handling
+pub struct MIP {
+    // TODO: Interrupt handling
     _1: bool,
     SSIP: bool,
     _2: bool,
@@ -21,7 +23,8 @@ pub struct MIP { // TODO: Interrupt handling
     _8: usize,
 }
 #[bitfield(u64)]
-pub struct MIE { // TODO: Interrupt handling
+pub struct MIE {
+    // TODO: Interrupt handling
     _1: bool,
     SSIE: bool,
     _2: bool,
@@ -45,8 +48,8 @@ impl CSR for MIP {
         Self::new()
     }
 
-    fn write_mask() -> u64 {
-        0b10101010101010
+    fn info() -> CSRInfo {
+        CSRInfo::new(0b10101010101010, RW)
     }
 
     fn name() -> CSRName {
@@ -59,8 +62,8 @@ impl CSR for MIE {
         Self::new()
     }
 
-    fn write_mask() -> u64 {
-        0b10101010101010
+    fn info() -> CSRInfo {
+        CSRInfo::new(0b10101010101010, RW)
     }
 
     fn name() -> CSRName {
