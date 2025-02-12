@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use crate::device::keyboard::{Keyboard, KEYBOARD_MMIO_START};
 use crate::device::liteuart::{LiteUART, LITEUART_MMIO_START};
+use crate::device::plic::{PLIC, PLIC_MMIO_START};
 use crate::device::rtc::{RTC, RTC_MMIO_START};
 use crate::device::serial::{Serial, SERIAL_MMIO_START};
 use crate::device::timer::{Timer, TIMER_MMIO_START};
@@ -21,6 +22,7 @@ use crate::memory::Memory;
 
 mod keyboard;
 mod liteuart;
+mod plic;
 mod rtc;
 mod serial;
 mod timer;
@@ -48,6 +50,8 @@ impl Devices {
         // let timer = Arc::new(Timer::new(stopped.clone()));
         // let timer = Arc::new(Timer::new());
         let rtc = Arc::new(RTC::new());
+        let plic = Arc::new(PLIC::new());
+
         memory.add_mmio(VGA_FRAME_BUF_MMIO_START, vga.clone());
         memory.add_mmio(VGA_CTL_MMIO_START, vga_ctrl.clone());
         memory.add_mmio(KEYBOARD_MMIO_START, keyboard.clone());
@@ -57,6 +61,7 @@ impl Devices {
         // memory.add_mmio(TIMER_MMIO_START, timer.clone());
         memory.add_mmio(TIMER_MMIO_START, glob_timer.clone());
         memory.add_mmio(RTC_MMIO_START, rtc.clone());
+        memory.add_mmio(PLIC_MMIO_START, plic.clone());
 
         // let rvtest_serial = Arc::new(RVTestSerial::new());
         // memory.add_mmio(SERIAL_MMIO_START_RVTEST, rvtest_serial.clone());

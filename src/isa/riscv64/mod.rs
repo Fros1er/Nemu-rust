@@ -1,4 +1,7 @@
-use crate::isa::riscv64::csr::CSRName::{mcause, mepc, mtval, mtvec};
+use crate::isa::riscv64::csr::mstatus::MStatus;
+use crate::isa::riscv64::csr::CSRName::{
+    mcause, medeleg, mepc, mstatus, mtval, mtvec, sepc, stvec,
+};
 use crate::isa::riscv64::csr::{CSRName, CSRs, MCauseCode};
 use crate::isa::riscv64::ibuf::SetAssociativeIBuf;
 use crate::isa::riscv64::inst::PATTERNS;
@@ -18,6 +21,7 @@ use std::fmt::Write;
 use std::str::FromStr;
 use std::thread;
 use strum::IntoEnumIterator;
+use strum_macros::FromRepr;
 use vaddr::MemOperationSize::DWORD;
 use vaddr::VAddr;
 
@@ -28,19 +32,27 @@ mod logo;
 pub mod reg;
 pub mod vaddr;
 
-pub(crate) struct RISCV64 {
+pub struct RISCV64 {
     state: RISCV64CpuState,
     disassembler: LLVMDisassembler,
     ibuf: SetAssociativeIBuf,
     stop_at_ebreak: bool,
 }
 
-pub(crate) struct RISCV64CpuState {
+#[derive(PartialEq, Copy, Clone, FromRepr, Debug)]
+pub enum RISCV64Privilege {
+    M,
+    S,
+    U,
+}
+
+pub struct RISCV64CpuState {
     regs: Registers,
     csrs: CSRs,
     pc: VAddr,
     dyn_pc: Option<VAddr>,
     memory: MMU,
+    privilege: RISCV64Privilege,
     backtrace: Vec<u64>,
     stopping: bool,
 }
@@ -53,6 +65,7 @@ impl RISCV64CpuState {
             pc: VAddr::new(0),
             dyn_pc: None,
             memory: MMU::new(memory),
+            privilege: RISCV64Privilege::M,
             backtrace: Vec::new(),
             stopping: false,
         }
@@ -63,10 +76,11 @@ impl Drop for RISCV64CpuState {
     fn drop(&mut self) {
         if thread::panicking() {
             eprintln!(
-                "pc: {:#x}\nregs: {}\ncsrs: {}",
+                "pc: {:#x}\nregs: {}\ncsrs: {}\npriv: {:?}",
                 self.pc.value(),
                 self.regs,
-                self.csrs
+                self.csrs,
+                self.privilege
             );
             eprintln!("Backtrace: ");
             eprint!("{}", self.get_backtrace_string());
@@ -89,21 +103,61 @@ impl RISCV64CpuState {
             self.stopping = true;
         }
 
-        self.csrs.set_n(mepc, self.pc.value());
-        self.csrs.set_n(mcause, cause as u64);
-        self.dyn_pc = Some(VAddr::new(self.csrs[mtvec].into()));
+        macro_rules! set_csr {
+            ($csr:expr, $val:expr) => {
+                let res = self.csrs.set_n($csr, $val);
+                if let Some(res) = res {
+                    res.call_hook(self)
+                }
+            };
+        }
+
+        let is_deleg = self.privilege != RISCV64Privilege::M
+            && (self.csrs[medeleg] & (1u64 << cause as u64)) != 0;
+        let prev_priv = self.privilege;
+        let next_priv = if is_deleg {
+            RISCV64Privilege::S
+        } else {
+            RISCV64Privilege::M
+        };
+
+        // update mstatus
+        let mut mstatus_reg: MStatus = self.csrs[mstatus].into();
+        mstatus_reg.update_when_trap(prev_priv, next_priv);
+        self.csrs.set_n(mstatus, mstatus_reg.into());
+
+        if next_priv == RISCV64Privilege::M {
+            set_csr!(mepc, self.pc.value());
+            set_csr!(mcause, cause as u64);
+            self.dyn_pc = Some(VAddr::new(self.csrs[mtvec].into()));
+            if let Some(val) = mtval_val {
+                set_csr!(mtval, val);
+            }
+        } else {
+            self.dyn_pc = Some(VAddr::new(self.csrs[stvec].into()));
+            todo!("delegate trap to S mode")
+        }
+
         if self.csrs[mtvec] == 0 {
             info!("mtvec unset. Stopping.");
             self.stopping = true;
         }
-
-        if let Some(val) = mtval_val {
-            self.csrs.set_n(mtval, val);
-        }
     }
 
-    fn ret(&mut self) {
-        self.dyn_pc = Some(VAddr::new(self.csrs[mepc].into()));
+    fn ret(&mut self, ret_inst: RISCV64Privilege) {
+        // update mstatus
+        let mut mstatus_reg: MStatus = self.csrs[mstatus].into();
+        let next_priv = mstatus_reg.update_when_ret(ret_inst);
+        self.csrs.set_n(mstatus, mstatus_reg.into());
+
+        let xepc = if self.privilege == RISCV64Privilege::M {
+            mepc
+        } else {
+            sepc
+        };
+        self.dyn_pc = Some(VAddr::new(self.csrs[xepc].into()));
+
+        self.privilege = next_priv;
         // info!("Ret mepc: {:#x}", self.csrs[mepc]);
     }
 

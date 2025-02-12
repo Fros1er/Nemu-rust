@@ -1,14 +1,14 @@
 #![allow(non_snake_case)]
 
-mod medeleg;
 mod mie;
-mod mstatus;
-mod satp;
+pub mod mstatus;
+pub mod satp;
 
 use crate::device::glob_timer;
 use crate::isa::riscv64::csr::CSRAccessLevel::RW;
 use crate::isa::riscv64::csr::CSRAccessLevel::{NotSupported, ROnly};
 use crate::isa::riscv64::reg::Reg;
+use crate::isa::riscv64::RISCV64CpuState;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::ops::Index;
@@ -37,8 +37,11 @@ impl CSRInfo {
     }
 }
 
+type WriteHook = fn(&Reg, &mut RISCV64CpuState);
+
 pub struct CSRs {
     csrs: HashMap<u64, (Reg, CSRInfo)>,
+    write_hooks: HashMap<u64, WriteHook>,
     time: Reg, // hack!
 } // name => (csr, write_mask)
 
@@ -50,10 +53,32 @@ trait CSR: Into<u64> {
     fn name() -> CSRName;
 }
 
+pub struct CSROpResult {
+    pub old: u64,
+    new: u64,
+    hook: Option<WriteHook>,
+}
+
+impl CSROpResult {
+    pub fn new(old: u64, new: u64, hook: Option<&WriteHook>) -> Self {
+        Self {
+            old,
+            new,
+            hook: hook.copied(),
+        }
+    }
+    pub fn call_hook(&self, state: &mut RISCV64CpuState) {
+        if let Some(hook) = self.hook {
+            hook(&self.new, state)
+        }
+    }
+}
+
 impl CSRs {
     pub fn new() -> Self {
         #[allow(unused_mut)]
         let mut map = HashMap::new();
+        let mut write_hooks: HashMap<u64, WriteHook> = HashMap::new();
         macro_rules! insert_csr {
             // illegal inst when write
             ($name: expr, $val:expr, $mask:expr, $ronly:expr) => {
@@ -68,6 +93,11 @@ impl CSRs {
                 );
             };
         }
+        macro_rules! insert_defined_csr_hook {
+            ($CSR:ty, $func:expr) => {
+                write_hooks.insert(<$CSR>::name() as u64, $func);
+            };
+        }
         macro_rules! insert_rw_csr {
             ($name: expr, $val:expr) => {
                 insert_csr!($name, $val, !0x0, RW);
@@ -80,24 +110,32 @@ impl CSRs {
         }
 
         insert_defined_csr!(satp::Satp);
+        insert_defined_csr_hook!(satp::Satp, satp::Satp::write_hook);
         insert_defined_csr!(mstatus::MStatus);
-        insert_defined_csr!(medeleg::MeDeleg);
-        insert_defined_csr!(medeleg::MiDeleg);
         insert_defined_csr!(mie::MIE);
         insert_defined_csr!(mie::MIP);
+
         insert_rw_csr!(CSRName::mtvec, 0);
+        insert_rw_csr!(CSRName::stvec, 0);
         insert_rw_csr!(CSRName::mscratch, 0);
         insert_rw_csr!(CSRName::mepc, 0);
+        insert_rw_csr!(CSRName::sepc, 0);
         insert_rw_csr!(CSRName::mcause, 0);
         insert_rw_csr!(CSRName::mtval, 0);
+        insert_rw_csr!(CSRName::stval, 0);
+        insert_rw_csr!(CSRName::mideleg, 0);
+        insert_csr!(CSRName::medeleg, 0, !0b10000100000000000, RW);
 
+        insert_ronly_csr!(CSRName::mvendorid, 0);
         insert_ronly_csr!(CSRName::mhartid, 0);
+
         insert_csr!(
             CSRName::misa,
-            0b10u64 << 62 | 0b101000001000100101001,
+            // 0b10u64 << 62 | 0b101000001000100101001, // rv64imafd with U and S
+            0b10u64 << 62 | 0b101000001000100000001, // rv64ima with U and S
             0x0,
             RW
-        ); // rv64imafd with U and S
+        );
         insert_csr!(CSRName::pmpcfg0, 0, 0, RW);
         insert_csr!(CSRName::pmpaddr0, 0, 0, RW);
 
@@ -118,7 +156,11 @@ impl CSRs {
         // time read is explicitly handled
         insert_ronly_csr!(CSRName::time, 0);
 
-        Self { csrs: map, time: 0 }
+        Self {
+            csrs: map,
+            time: 0,
+            write_hooks,
+        }
     }
 
     fn check_idx(&self, idx: u64) {
@@ -128,7 +170,11 @@ impl CSRs {
     }
 
     #[inline]
-    fn get_csr_mut(&mut self, idx: u64, check_ronly: bool) -> Option<(&mut Reg, &u64)> {
+    fn get_csr_mut(
+        &mut self,
+        idx: u64,
+        check_ronly: bool,
+    ) -> Option<(&mut Reg, &u64, Option<&WriteHook>)> {
         self.check_idx(idx);
         let (csr, info) = self.csrs.get_mut(&(idx)).unwrap();
         match info.access_level {
@@ -146,39 +192,42 @@ impl CSRs {
             RW => {}
         }
 
+        let hook = self.write_hooks.get(&idx);
+
         if idx == CSRName::time as u64 {
             self.time = glob_timer.since_boot_us();
-            return Some((&mut self.time, &info.write_mask));
+            return Some((&mut self.time, &info.write_mask, hook));
         }
 
-        Some((csr, &info.write_mask))
+        Some((csr, &info.write_mask, hook))
     }
 
-    pub fn set_n(&mut self, idx: CSRName, val: u64) -> Option<u64> {
-        let (csr, mask) = self.get_csr_mut(idx as u64, true)?;
-        *csr = val & *mask;
-        Some(*csr)
-    }
-
-    pub fn set(&mut self, idx: u64, val: u64, _rs1_is_x0: bool) -> Option<u64> {
-        let (csr, mask) = self.get_csr_mut(idx, true)?;
+    pub fn set_n(&mut self, idx: CSRName, val: u64) -> Option<CSROpResult> {
+        let (csr, mask, hook) = self.get_csr_mut(idx as u64, true)?;
         let res = *csr;
         *csr = val & *mask;
-        Some(res)
+        Some(CSROpResult::new(res, *csr, hook))
     }
 
-    pub fn or(&mut self, idx: u64, val: u64, rs1_is_x0: bool) -> Option<u64> {
-        let (csr, mask) = self.get_csr_mut(idx, !rs1_is_x0)?;
+    pub fn set(&mut self, idx: u64, val: u64, _rs1_is_x0: bool) -> Option<CSROpResult> {
+        let (csr, mask, hook) = self.get_csr_mut(idx, true)?;
+        let res = *csr;
+        *csr = val & *mask;
+        Some(CSROpResult::new(res, *csr, hook))
+    }
+
+    pub fn or(&mut self, idx: u64, val: u64, rs1_is_x0: bool) -> Option<CSROpResult> {
+        let (csr, mask, hook) = self.get_csr_mut(idx, !rs1_is_x0)?;
         let res = *csr;
         *csr |= val & *mask;
-        Some(res)
+        Some(CSROpResult::new(res, *csr, hook))
     }
 
-    pub fn and(&mut self, idx: u64, val: u64, rs1_is_x0: bool) -> Option<u64> {
-        let (csr, mask) = self.get_csr_mut(idx, !rs1_is_x0)?;
+    pub fn and(&mut self, idx: u64, val: u64, rs1_is_x0: bool) -> Option<CSROpResult> {
+        let (csr, mask, hook) = self.get_csr_mut(idx, !rs1_is_x0)?;
         let res = *csr;
         *csr &= val | !*mask;
-        Some(res)
+        Some(CSROpResult::new(res, *csr, hook))
     }
 }
 
@@ -193,7 +242,7 @@ impl Display for CSRs {
     }
 }
 
-#[derive(PartialEq, IntoStaticStr)]
+#[derive(PartialEq, IntoStaticStr, Copy, Clone)]
 pub enum MCauseCode {
     InstAccessFault = 1,
     IllegalInst = 2,
@@ -208,7 +257,10 @@ pub enum MCauseCode {
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, EnumIter, EnumString, IntoStaticStr)]
 pub enum CSRName {
+    stvec = 0x105,
     scounteren = 0x106,
+    sepc = 0x141,
+    stval = 0x143,
 
     satp = 0x180,
     mstatus = 0x300,
@@ -234,6 +286,7 @@ pub enum CSRName {
     // pmpaddr3 = 0x3B3,
     time = 0xc01,
 
+    mvendorid = 0xF11,
     mhartid = 0xF14,
     // mnscratch = 0x740,
     // mnstatus = 0x744,
@@ -248,17 +301,6 @@ pub enum CSRNameNotImpl {
     tselect = 0x7a0,
 }
 
-// impl Index<u64> for CSRs {
-//     type Output = Reg;
-//
-//     fn index(&self, index: u64) -> &Self::Output {
-//         if !self.0.contains_key(&index) {
-//             panic!("CSR not found: {:#x}", index);
-//         }
-//         &self.0[&index].0
-//     }
-// }
-//
 impl Index<CSRName> for CSRs {
     type Output = Reg;
 

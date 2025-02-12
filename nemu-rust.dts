@@ -35,12 +35,6 @@
 		#size-cells = <1>;
 		compatible = "freechips,rocketchip-unknown-soc", "simple-bus";
 		ranges;
-		L6: clint@2000000 {
-			compatible = "riscv,clint0";
-			interrupts-extended = <&L2 3 &L2 7>;
-			reg = <0x2000000 0x10000>;
-			reg-names = "control";
-		};
 		L1: error-device@3000 {
 			compatible = "sifive,error0";
 			reg = <0x3000 0x1000>;
@@ -64,11 +58,6 @@
 			#size-cells = <1>;
 			compatible = "simple-bus";
 			ranges = <0x60000000 0x60000000 0x20000000>;
-		};
-		L12: rom@10000 {
-			compatible = "sifive,rom0";
-			reg = <0x10000 0x10000>;
-			reg-names = "mem";
 		};
 		L0: subsystem_pbus_clock {
 			#clock-cells = <0>;

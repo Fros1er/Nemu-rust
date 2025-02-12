@@ -5,7 +5,7 @@ use crate::isa::riscv64::inst::InstType::{Zicsr, B, I, J, R, S, U};
 use crate::isa::riscv64::reg::{Reg, RegName};
 use crate::isa::riscv64::vaddr::MemOperationSize::{Byte, DWORD, QWORD, WORD};
 use crate::isa::riscv64::vaddr::{MemOperationSize, VAddr};
-use crate::isa::riscv64::RISCV64CpuState;
+use crate::isa::riscv64::{RISCV64CpuState, RISCV64Privilege};
 use lazy_static::lazy_static;
 use log::info;
 
@@ -321,7 +321,22 @@ macro_rules! gen_zicsr {
             state.regs[inst.rs1],
             inst.rs1 == RegName::zero as u64,
         ) {
-            Some(res) => state.regs[inst.rd] = res,
+            Some(res) => {
+                res.call_hook(state);
+                state.regs[inst.rd] = res.old
+            }
+            None => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
+        }
+    };
+}
+
+macro_rules! gen_zicsr_i {
+    ($op: tt) => {
+        |inst, state| match state.csrs.$op(inst.imm, inst.rs1, false) {
+            Some(res) => {
+                res.call_hook(state);
+                state.regs[inst.rd] = res.old
+            }
             None => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
         }
     };
@@ -362,7 +377,7 @@ macro_rules! gen_zaamo {
 }
 
 lazy_static! {
-pub static ref PATTERNS: [Pattern;72] = [
+pub static ref PATTERNS: [Pattern;74] = [
     // memory
     make_pattern("??????? ????? ????? 000 ????? 0000011", I, "lb", gen_load!(Byte)),
     make_pattern("??????? ????? ????? 100 ????? 0000011", I, "lbu", gen_load_u!(Byte)),
@@ -559,15 +574,9 @@ pub static ref PATTERNS: [Pattern;72] = [
     make_pattern("??????? ????? ????? 001 ????? 1110011", Zicsr, "csrrw", gen_zicsr!(set)),
     make_pattern("??????? ????? ????? 010 ????? 1110011", Zicsr, "csrrs", gen_zicsr!(or)),
     make_pattern("??????? ????? ????? 011 ????? 1110011", Zicsr, "csrrc", gen_zicsr!(and)),
-    make_pattern(
-        "??????? ????? ????? 101 ????? 1110011", Zicsr, "csrrwi",
-        |inst, state| {
-            match state.csrs.set(inst.imm, inst.rs1, false) {
-                Some(res) => {state.regs[inst.rd] = res}
-                None => {state.trap(MCauseCode::IllegalInst, Some(inst.inst))}
-            }
-        },
-    ),
+    make_pattern("??????? ????? ????? 101 ????? 1110011", Zicsr, "csrrwi",gen_zicsr_i!(set)),
+    make_pattern("??????? ????? ????? 110 ????? 1110011", Zicsr, "csrrsi",gen_zicsr_i!(or)),
+    make_pattern("??????? ????? ????? 111 ????? 1110011", Zicsr, "csrrci",gen_zicsr_i!(and)),
     // Zaamo, ignore aq and rl
     make_pattern("00001 ?? ????? ????? 010 ????? 0101111", R, "amoswap.w", gen_zaamo!(wrapping_add, WORD, true)),
     make_pattern("00001 ?? ????? ????? 011 ????? 0101111", R, "amoswap.d", gen_zaamo!(wrapping_add, DWORD, true)),
@@ -591,11 +600,11 @@ pub static ref PATTERNS: [Pattern;72] = [
     ),
     make_pattern(
         "0001000 00010 00000 000 00000 1110011", I, "sret",
-        |_inst, state| state.ret()
+        |_inst, state| state.ret(RISCV64Privilege::S)
     ),
     make_pattern(
         "0011000 00010 00000 000 00000 1110011", I, "mret",
-        |_inst, state| state.ret()
+        |_inst, state| state.ret(RISCV64Privilege::M)
     ),
     make_pattern(
         "??????? ????? ????? 000 ????? 0001111", I, "fence",
@@ -639,16 +648,16 @@ mod tests {
         // println!("{:#x}", truncate_32(0xffffffffffff));
         // println!("{}", test!(^));
         // println!("{}", test!(+));
-        let pat = &PATTERNS;
-        let mut pat_map = HashMap::<&str, &Pattern>::new();
-        for p in pat as &[Pattern; 72] {
-            if p.match_inst(&0x03079793u64) {
-                println!("{}", p._name);
-            }
-            pat_map.insert(p._name, p);
-        }
+        // let pat = &PATTERNS;
+        // let mut pat_map = HashMap::<&str, &Pattern>::new();
+        // for p in pat as &[Pattern; 72] {
+        //     if p.match_inst(&0x03079793u64) {
+        //         println!("{}", p._name);
+        //     }
+        //     pat_map.insert(p._name, p);
+        // }
         // pat_map["srliw"].match_inst(&0x0017d69bu64);
-        pat_map["slli"].match_inst(&0x3079793u64);
+        // pat_map["slli"].match_inst(&0x3079793u64);
         // if p.match_inst(&0x0017d69bu64) {
         //     println!("{}", p._name);
         // }

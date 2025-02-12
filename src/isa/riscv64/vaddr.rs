@@ -1,11 +1,11 @@
+use crate::isa::riscv64::csr::satp::{SATPMode, Satp};
 use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
 
 #[derive(Copy, Clone)]
 pub struct VAddr(u64);
 
-#[derive(Copy, Clone)]
-#[derive(PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum MemOperationSize {
     Byte = 1,
     WORD = 2,
@@ -50,13 +50,26 @@ impl From<PAddr> for VAddr {
     }
 }
 
-pub struct MMU {
+struct SV39 {
+    lvl1_base: u64,
+}
+
+pub struct TranslationCtrl {
+    pub is_bare: bool,
+    sv39: SV39,
+}
+
+pub(crate) struct MMU {
     mem: Memory,
+    translation_ctrl: TranslationCtrl,
 }
 
 impl MMU {
     pub fn new(mem: Memory) -> Self {
-        Self { mem }
+        Self {
+            mem,
+            translation_ctrl: TranslationCtrl::new(),
+        }
     }
 
     pub fn read_if_tmp(&self, vaddr: &VAddr, len: MemOperationSize) -> Option<u64> {
@@ -74,5 +87,31 @@ impl MMU {
 
     pub fn is_aligned(&self, vaddr: &VAddr, len: MemOperationSize) -> bool {
         vaddr.value() % (len as u64) == 0
+    }
+
+    pub fn update_translation_ctrl(&mut self, satp: &Satp) {
+        let mode = SATPMode::from_repr(satp.mode());
+        match mode {
+            None => panic!("Unsupported SATP mode: {}", satp.mode()),
+            Some(mode) => {
+                self.translation_ctrl.is_bare = if mode == SATPMode::Bare { true } else { false };
+            }
+        }
+        self.translation_ctrl.sv39.lvl1_base = satp.ppn() << 12;
+    }
+}
+
+impl TranslationCtrl {
+    pub fn new() -> Self {
+        Self {
+            is_bare: true,
+            sv39: SV39::new(),
+        }
+    }
+}
+
+impl SV39 {
+    pub fn new() -> Self {
+        Self { lvl1_base: 0 }
     }
 }
