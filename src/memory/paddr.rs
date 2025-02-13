@@ -1,6 +1,8 @@
-use crate::isa::riscv64::vaddr::{MemOperationSize, VAddr};
+use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::Memory;
-use crate::utils::configs::{CONFIG_MEM_BASE, CONFIG_MEM_SIZE, CONFIG_FIRMWARE_BASE, CONFIG_FIRMWARE_SIZE};
+use crate::utils::configs::{
+    CONFIG_FIRMWARE_BASE, CONFIG_FIRMWARE_SIZE, CONFIG_MEM_BASE, CONFIG_MEM_SIZE,
+};
 use lazy_static::lazy_static;
 use log::info;
 use std::fmt::{Display, Formatter, LowerHex};
@@ -22,12 +24,6 @@ impl PAddr {
     }
     pub fn value(&self) -> u64 {
         self.0
-    }
-}
-
-impl From<&VAddr> for PAddr {
-    fn from(value: &VAddr) -> Self {
-        Self(value.value())
     }
 }
 
@@ -86,14 +82,22 @@ impl Memory {
         }
     }
 
+    pub fn read_mem(&self, paddr: &PAddr, len: MemOperationSize) -> Option<u64> {
+        if let Some(ptr) = self.get_mem_ptr(paddr) {
+            return Some(len.read_sized(ptr));
+        }
+        info!("MEM READ ERR: {:#x}", paddr.0);
+        None
+    }
+
     pub fn read(&self, paddr: &PAddr, len: MemOperationSize) -> Option<u64> {
         if let Some(ptr) = self.get_mem_ptr(paddr) {
             return Some(len.read_sized(ptr));
         }
         if let Some(iomap) = self.find_iomap(paddr) {
-            return Some(iomap.device.read(iomap.paddr_to_device_mem_idx(paddr), len))
+            return Some(iomap.device.read(iomap.paddr_to_device_mem_idx(paddr), len));
         }
-        info!("MEM READ ERR: {:#x}", paddr.0);
+        info!("MEM & IO READ ERR: {:#x}", paddr.0);
         None
     }
 
@@ -102,7 +106,7 @@ impl Memory {
             len.write_sized(data, ptr);
             return Ok(());
         }
-        
+
         match self.find_iomap_mut(paddr) {
             Some(iomap) => {
                 iomap
@@ -113,7 +117,7 @@ impl Memory {
             None => {
                 info!("MEM WRITE ERR: {:#x}", paddr.0);
                 Err(())
-            },
+            }
         }
     }
     // len: n elements, not n bytes!

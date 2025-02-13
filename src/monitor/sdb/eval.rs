@@ -129,8 +129,7 @@ pub fn eval_expr<T: Isa>(expr: &Expr, emulator: &mut Emulator<T>) -> Result<i64,
                 .cpu
                 .read_vaddr(&VAddr::new(addr), DWORD)
                 .map(|x| x as i64)
-                .ok_or("Access fault".to_string())
-        },
+        }
         Expr::Neg(a) => Ok(-eval_expr(a, emulator)?),
         Expr::Add(a, b) => Ok(eval_expr(a, emulator)? + eval_expr(b, emulator)?),
         Expr::Sub(a, b) => Ok(eval_expr(a, emulator)? - eval_expr(b, emulator)?),

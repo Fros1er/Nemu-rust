@@ -16,8 +16,10 @@ use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 use crate::monitor::Args;
 use crate::utils::configs::CONFIG_MEM_BASE;
 use crate::utils::disasm::LLVMDisassembler;
-use log::{error, info};
+use log::{error, info, warn};
+use std::cell::RefCell;
 use std::fmt::Write;
+use std::rc::Rc;
 use std::str::FromStr;
 use std::thread;
 use strum::IntoEnumIterator;
@@ -52,21 +54,22 @@ pub struct RISCV64CpuState {
     pc: VAddr,
     dyn_pc: Option<VAddr>,
     memory: MMU,
-    privilege: RISCV64Privilege,
+    privilege: Rc<RefCell<RISCV64Privilege>>,
     backtrace: Vec<u64>,
     stopping: bool,
 }
 
 impl RISCV64CpuState {
     fn new(memory: Memory, reset_vector: &PAddr) -> Self {
-        let mmu = MMU::new(memory);
+        let privilege = Rc::new(RefCell::new(RISCV64Privilege::M));
+        let mmu = MMU::new(memory, privilege.clone());
         Self {
             regs: Registers::new(),
             csrs: CSRs::new(),
             pc: mmu.paddr_to_vaddr(reset_vector),
             dyn_pc: None,
             memory: mmu,
-            privilege: RISCV64Privilege::M,
+            privilege,
             backtrace: Vec::new(),
             stopping: false,
         }
@@ -92,7 +95,7 @@ impl Drop for RISCV64CpuState {
 impl RISCV64CpuState {
     fn trap(&mut self, cause: MCauseCode, mtval_val: Option<u64>) {
         let cause_name: &'static str = (&cause).into();
-        info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
+        // info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
 
         if cause == MCauseCode::ECallM && self.regs[a7] == 93 {
             info!("riscv-test passfail triggered");
@@ -113,14 +116,19 @@ impl RISCV64CpuState {
             };
         }
 
-        let is_deleg = self.privilege != RISCV64Privilege::M
+        let is_deleg = *self.privilege.borrow() != RISCV64Privilege::M
             && (self.csrs[medeleg] & (1u64 << cause as u64)) != 0;
-        let prev_priv = self.privilege;
+        let prev_priv = *self.privilege.borrow();
         let next_priv = if is_deleg {
             RISCV64Privilege::S
         } else {
             RISCV64Privilege::M
         };
+
+        // info!(
+        //     "medeleg {:#x}, is_deleg {}, from {:?} to {:?}",
+        //     self.csrs[medeleg], is_deleg, prev_priv, next_priv
+        // );
 
         // update mstatus
         let mut mstatus_reg: MStatus = self.csrs[mstatus].into();
@@ -136,8 +144,10 @@ impl RISCV64CpuState {
             }
         } else {
             self.dyn_pc = Some(VAddr::new(self.csrs[stvec].into()));
+            info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
             todo!("delegate trap to S mode")
         }
+        self.privilege.replace(next_priv);
 
         if self.csrs[mtvec] == 0 {
             info!("mtvec unset. Stopping.");
@@ -151,15 +161,19 @@ impl RISCV64CpuState {
         let next_priv = mstatus_reg.update_when_ret(ret_inst);
         self.csrs.set_n(mstatus, mstatus_reg.into());
 
-        let xepc = if self.privilege == RISCV64Privilege::M {
+        let xepc = if *self.privilege.borrow() == RISCV64Privilege::M {
             mepc
         } else {
             sepc
         };
         self.dyn_pc = Some(VAddr::new(self.csrs[xepc].into()));
 
-        self.privilege = next_priv;
-        // info!("Ret mepc: {:#x}", self.csrs[mepc]);
+        // info!(
+        //     "Ret epc: {:#x}, from {:?} to {:?}",
+        //     self.csrs[xepc], self.privilege, next_priv
+        // );
+
+        self.privilege.replace(next_priv);
     }
 
     fn get_backtrace_string(&self) -> String {
@@ -176,7 +190,7 @@ impl Isa for RISCV64 {
         // let reset_addr: PAddr = CONFIG_MBASE + CONFIG_PC_RESET_OFFSET;
         let reset_addr: PAddr = PAddr::new(CONFIG_MEM_BASE.value());
         // let reset_addr: PAddr = PAddr::new(CONFIG_FIRMWARE_BASE.value());
-        let mut state = RISCV64CpuState::new(memory, &reset_addr);
+        let state = RISCV64CpuState::new(memory, &reset_addr);
         Self {
             state,
             disassembler: LLVMDisassembler::new(
@@ -222,46 +236,52 @@ impl Isa for RISCV64 {
         if self.state.stopping {
             return false;
         }
-        let pc_paddr: &PAddr = &(&self.state.pc).into();
-        let inst = self.state.memory.read(&self.state.pc, DWORD);
-        if inst.is_none() {
-            self.state
-                .trap(MCauseCode::InstAccessFault, Some(self.state.pc.value()));
-        } else {
-            let inst = inst.unwrap();
-            let (pattern, decode) = match self.ibuf.get(pc_paddr, inst) {
-                Some(content) => content,
-                None => {
-                    if inst == 0x0000006f {
-                        info!("dead loop at pc {:#x}", self.state.pc.value());
-                        self.state.regs[a0] = 1;
-                        return false;
-                    }
-                    // decode exec
-                    match PATTERNS.iter().find(|p| p.match_inst(&inst)) {
-                        None => {
-                            error!(
-                                "invalid inst: {:#x} at addr {:#x}",
-                                inst,
-                                self.state.pc.value()
-                            );
-                            error!(
-                                "disasm as: {}",
-                                self.disassembler
-                                    .disassemble(inst as u32, self.state.pc.value())
-                            );
-                            info!("bt:\n{}", self.isa_get_backtrace());
+        let inst = self.state.memory.ifetch(&self.state.pc, DWORD);
+        match inst {
+            Err(err) => {
+                self.state.trap(err, Some(self.state.pc.value()));
+            }
+            Ok((inst, pc_paddr)) => {
+                let (pattern, decode) = match self.ibuf.get(&pc_paddr, inst) {
+                    Some(content) => content,
+                    None => {
+                        if inst == 0x0000006f {
+                            info!("dead loop at pc {:#x}", self.state.pc.value());
                             self.state.regs[a0] = 1;
                             return false;
                         }
-                        Some(pat) => self.ibuf.set(pc_paddr, inst, pat, pat.decode(&inst)),
+                        // decode exec
+                        match PATTERNS.iter().find(|p| p.match_inst(&inst)) {
+                            None => {
+                                error!(
+                                    "invalid inst: {:#x} at addr {:#x}",
+                                    inst,
+                                    self.state.pc.value()
+                                );
+                                error!(
+                                    "disasm as: {}",
+                                    self.disassembler
+                                        .disassemble(inst as u32, self.state.pc.value())
+                                );
+                                info!("bt:\n{}", self.isa_get_backtrace());
+                                self.state.regs[a0] = 1;
+                                return false;
+                            }
+                            Some(pat) => self.ibuf.set(&pc_paddr, inst, pat, pat.decode(&inst)),
+                        }
                     }
-                }
-            };
-            pattern.exec(decode, &mut self.state);
+                };
+                pattern.exec(decode, &mut self.state);
+            }
         }
         match &self.state.dyn_pc {
             Some(pc) => {
+                if pc.value() == 0 {
+                    warn!(
+                        "Jump to address 0. Current pc vaddr: {:#x}",
+                        self.state.pc.value()
+                    );
+                }
                 self.state.pc = *pc;
                 self.state.dyn_pc = None;
             }
@@ -295,19 +315,22 @@ impl Isa for RISCV64 {
     fn isa_disassemble_inst(&mut self, addr: &VAddr) -> String {
         let inst = self.state.memory.read(addr, DWORD);
         match inst {
-            Some(inst) => format!(
+            Ok(inst) => format!(
                 "inst {:#x} at addr {:#x}\nDisassembled as {}",
                 inst,
                 addr.value(),
                 self.disassembler
                     .disassemble(inst as u32, self.state.pc.value())
             ),
-            None => format!("Access Fault at addr {:#x}", addr.value()),
+            Err(err) => format!("{:?} at addr {:#x}", err, addr.value()),
         }
     }
 
-    fn read_vaddr(&mut self, addr: &VAddr, len: MemOperationSize) -> Option<u64> {
-        self.state.memory.read(addr, len)
+    fn read_vaddr(&mut self, addr: &VAddr, len: MemOperationSize) -> Result<u64, String> {
+        self.state
+            .memory
+            .read(addr, len)
+            .map_err(|e| format!("{:?}", e))
     }
 
     fn isa_get_backtrace(&self) -> String {

@@ -1,7 +1,7 @@
 pub mod sdb;
 
 use crate::memory::Memory;
-use crate::utils::configs::CONFIG_FIRMWARE_SIZE;
+use crate::utils::configs::{CONFIG_FIRMWARE_SIZE, CONFIG_MEM_SIZE};
 use clap::Parser;
 use log::LevelFilter;
 use simplelog::{Config, SimpleLogger, WriteLogger};
@@ -76,10 +76,10 @@ pub(crate) fn load_img(img_file: &String, memory: &mut Memory) -> usize {
     let path = Path::new(img_file);
     let mut f = File::open(path).unwrap();
     let size = f.metadata().unwrap().len();
-    if size > CONFIG_FIRMWARE_SIZE {
+    if size > CONFIG_MEM_SIZE - 0x200000 {
         panic!("Image too large ({} or {:#x} bytes).", size, size);
     }
-    f.read(&mut memory.pmem[0x1000000..]).unwrap()
+    f.read(&mut memory.pmem[0x200000..]).unwrap()
 }
 
 // pub fn init_monitor<U: CPUState, T: Isa<U>>() -> T {

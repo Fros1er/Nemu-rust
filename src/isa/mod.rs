@@ -1,8 +1,8 @@
-use riscv64::vaddr::VAddr;
+use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::Memory;
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
-use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::monitor::Args;
+use riscv64::vaddr::VAddr;
 
 pub(crate) mod riscv64;
 
@@ -29,13 +29,13 @@ pub trait Isa {
 
     fn isa_disassemble_inst(&mut self, addr: &VAddr) -> String;
     // mmu
-    fn read_vaddr(&mut self, addr: &VAddr, len: MemOperationSize) -> Option<u64>;
+    fn read_vaddr(&mut self, addr: &VAddr, len: MemOperationSize) -> Result<u64, String>;
     // todo
     // interrupt/exception
     // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr;
     // fn isa_query_interrupt() -> u64;
     fn isa_get_backtrace(&self) -> String;
-    
+
     // difftest
     // fn isa_difftest_check_regs(ref_r: T, pc: VAddr) -> bool;
     fn isa_difftest_init(&mut self) -> DifftestInfo;

@@ -1,6 +1,21 @@
+#![allow(non_snake_case)]
+
+use crate::isa::riscv64::csr::mstatus::MStatus;
 use crate::isa::riscv64::csr::satp::{SATPMode, Satp};
+use crate::isa::riscv64::csr::MCauseCode;
+use crate::isa::riscv64::csr::MCauseCode::{
+    InstAccessFault, InstPageFault, LoadAccessFault, LoadPageFault, StoreAMOAccessFault,
+    StoreAMOPageFault,
+};
+use crate::isa::riscv64::vaddr::TranslationErr::{AccessFault, PageFault};
+use crate::isa::riscv64::RISCV64Privilege;
 use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
+use bitfield_struct::bitfield;
+use log::info;
+use std::cell::RefCell;
+use std::cmp::PartialEq;
+use std::rc::Rc;
 
 #[derive(Copy, Clone)]
 pub struct VAddr(u64);
@@ -51,6 +66,9 @@ struct SV39 {
 pub struct TranslationCtrl {
     pub is_bare: bool,
     sv39: SV39,
+    privilege: Rc<RefCell<RISCV64Privilege>>,
+    SUM: bool,
+    MXR: bool,
 }
 
 pub(crate) struct MMU {
@@ -58,11 +76,65 @@ pub(crate) struct MMU {
     translation_ctrl: TranslationCtrl,
 }
 
+#[bitfield(u64)]
+pub struct SV39PTE {
+    valid: bool,
+    R: bool,
+    W: bool,
+    X: bool,
+    U: bool,
+    G: bool,
+    A: bool,
+    D: bool,
+    #[bits(2)]
+    RSW: u64,
+    // #[bits(9)]
+    // PPN0: u64,
+    // #[bits(9)]
+    // PPN1: u64,
+    // #[bits(26)]
+    // PPN2: u64,
+    #[bits(44)]
+    PPN: u64,
+    #[bits(10)]
+    _8: usize,
+}
+
+impl SV39PTE {
+    pub fn is_next_lvl_ptr(&self) -> bool {
+        !(self.R() || self.X())
+    }
+
+    pub fn is_invalid(&self) -> bool {
+        !self.valid() || (self.W() && !self.R())
+    }
+
+    pub fn check_access_type(&self, typ: MemoryAccessType, MXR: bool) -> bool {
+        match typ {
+            MemoryAccessType::R => self.R() || (self.X() && MXR),
+            MemoryAccessType::W => self.W(),
+            MemoryAccessType::X => self.X(),
+        }
+    }
+}
+
+enum TranslationErr {
+    AccessFault,
+    PageFault,
+}
+
+#[derive(PartialEq)]
+enum MemoryAccessType {
+    R,
+    W,
+    X,
+}
+
 impl MMU {
-    pub fn new(mem: Memory) -> Self {
+    pub fn new(mem: Memory, privilege: Rc<RefCell<RISCV64Privilege>>) -> Self {
         Self {
             mem,
-            translation_ctrl: TranslationCtrl::new(),
+            translation_ctrl: TranslationCtrl::new(privilege),
         }
     }
 
@@ -71,14 +143,122 @@ impl MMU {
         VAddr::new(paddr.value())
     }
 
-    pub fn read(&self, vaddr: &VAddr, len: MemOperationSize) -> Option<u64> {
-        assert!(self.translation_ctrl.is_bare);
-        self.mem.read(&vaddr.into(), len)
+    fn translate(&self, vaddr: &VAddr, typ: MemoryAccessType) -> Result<PAddr, TranslationErr> {
+        if *self.translation_ctrl.privilege.borrow() == RISCV64Privilege::M
+            || self.translation_ctrl.is_bare
+        {
+            return Ok(PAddr::new(vaddr.value()));
+        }
+
+        let vaddr = vaddr.value();
+        let ofs = vaddr & 0b111111111111;
+        let vpn = [
+            (vaddr >> 12) & 0b111111111,
+            (vaddr >> 21) & 0b111111111,
+            (vaddr >> 30) & 0b111111111,
+        ];
+
+        let mut a = self.translation_ctrl.sv39.lvl1_base;
+        let mut res_pte: Option<SV39PTE> = None;
+        let mut i = 2;
+        for _ in 0..3 {
+            let lvl = i;
+            // info!("try get pte {} at {:#x}", i, a + vpn[lvl] * 8);
+            let pte = SV39PTE::from(
+                self.mem
+                    .read_mem(&PAddr::new(a + vpn[lvl] * 8), MemOperationSize::DWORD)
+                    .ok_or(AccessFault)?,
+            );
+            // info!("pte {} {:#x}", i, pte.0);
+            if pte.0 == 0x0 {
+                panic!("PTE IS ZERO")
+            }
+            if pte.is_invalid() {
+                return Err(PageFault);
+            }
+            if !pte.is_next_lvl_ptr() {
+                res_pte = Some(pte);
+                break;
+            }
+            a = pte.PPN() << 12;
+            i -= 1;
+        }
+        if res_pte.is_none() {
+            info!("res_pte is none");
+            return Err(PageFault);
+        }
+        let res_pte = res_pte.unwrap();
+        // info!("res pte {} {:#x}", i, res_pte.0);
+        if i > 0 && (res_pte.PPN() & ((1 << (9 * i)) - 1)) != 0 {
+            info!("misaligned super page, ppn {:#x}", res_pte.PPN());
+            return Err(PageFault); // misaligned super page
+        }
+
+        let privilege = *self.translation_ctrl.privilege.borrow();
+        if privilege == RISCV64Privilege::U && !res_pte.U() {
+            return Err(AccessFault);
+        }
+        if res_pte.U() && privilege == RISCV64Privilege::S && !self.translation_ctrl.SUM {
+            return Err(AccessFault);
+        }
+        if !res_pte.check_access_type(typ, self.translation_ctrl.MXR) {
+            info!("check_access_type failed");
+            return Err(PageFault);
+        }
+
+        // TODO: pte.a and pte.d
+        let paddr = if i > 0 {
+            let ofs_len = 9 * i + 12;
+            (res_pte.PPN() << 12) | vaddr & ((1 << ofs_len) - 1)
+        } else {
+            (res_pte.PPN() << 12) | ofs
+        };
+        // info!("PTE PPN is {:#x}, i is {}", res_pte.PPN(), i);
+        // info!("translate {:#x} to {:#x}", vaddr, paddr);
+        Ok(PAddr::new(paddr))
     }
 
-    pub fn write(&mut self, vaddr: &VAddr, data: u64, len: MemOperationSize) -> Result<(), ()> {
-        assert!(self.translation_ctrl.is_bare);
-        self.mem.write(&vaddr.into(), data, len)
+    pub fn ifetch(&self, vaddr: &VAddr, len: MemOperationSize) -> Result<(u64, PAddr), MCauseCode> {
+        match self.translate(vaddr, MemoryAccessType::X) {
+            Ok(paddr) => match self.mem.read(&paddr, len) {
+                Some(v) => Ok((v, paddr)),
+                None => Err(InstAccessFault),
+            },
+            Err(e) => match e {
+                AccessFault => Err(InstAccessFault),
+                PageFault => Err(InstPageFault),
+            },
+        }
+    }
+    pub fn read(&self, vaddr: &VAddr, len: MemOperationSize) -> Result<u64, MCauseCode> {
+        match self.translate(vaddr, MemoryAccessType::R) {
+            Ok(paddr) => match self.mem.read(&paddr, len) {
+                Some(v) => Ok(v),
+                None => Err(LoadAccessFault),
+            },
+            Err(e) => match e {
+                AccessFault => Err(LoadAccessFault),
+                PageFault => Err(LoadPageFault),
+            },
+        }
+    }
+
+    pub fn write(
+        &mut self,
+        vaddr: &VAddr,
+        data: u64,
+        len: MemOperationSize,
+    ) -> Result<(), MCauseCode> {
+        match self.translate(vaddr, MemoryAccessType::W) {
+            Ok(paddr) => match self.mem.write(&paddr, data, len) {
+                Ok(_) => Ok(()),
+                Err(_) => Err(StoreAMOAccessFault),
+            },
+            Err(e) => match e {
+                AccessFault => Err(StoreAMOAccessFault),
+                PageFault => Err(StoreAMOPageFault),
+            },
+        }
     }
 
     pub fn is_aligned(&self, vaddr: &VAddr, len: MemOperationSize) -> bool {
@@ -95,13 +275,21 @@ impl MMU {
         }
         self.translation_ctrl.sv39.lvl1_base = satp.ppn() << 12;
     }
+
+    pub fn update_priv(&mut self, mstatus: &MStatus) {
+        self.translation_ctrl.SUM = mstatus.SUM();
+        self.translation_ctrl.MXR = mstatus.MXR();
+    }
 }
 
 impl TranslationCtrl {
-    pub fn new() -> Self {
+    pub fn new(privilege: Rc<RefCell<RISCV64Privilege>>) -> Self {
         Self {
             is_bare: true,
             sv39: SV39::new(),
+            privilege,
+            SUM: false,
+            MXR: false,
         }
     }
 }

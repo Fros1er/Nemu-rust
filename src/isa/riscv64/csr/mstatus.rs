@@ -23,8 +23,8 @@ pub struct MStatus {
     #[bits(2)]
     XS: usize, // 0
     MPRV: bool, // MMU: Enable MMU even in M Mode
-    SUM: bool,  // MMU: S-mode memory accesses to pages that are accessible by U-mode is permitted
-    MXR: bool,  // MMU: loads from pages marked executable will succeed.
+    pub SUM: bool, // MMU: S-mode memory accesses to pages that are accessible by U-mode is permitted
+    pub MXR: bool, // MMU: loads from pages marked executable will succeed.
     TVM: bool, // VIRT: attempts to read or write the satp CSR or execute an SFENCE.VMA or SINVAL.VMA instruction while executing in S-mode will raise an illegal-instruction exception.
     TW: bool,  // for WFI
     TSR: bool, // VIRT: illegal-instruction when sret in S mode

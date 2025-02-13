@@ -5,6 +5,7 @@ pub mod mstatus;
 pub mod satp;
 
 use crate::device::glob_timer;
+use crate::isa::riscv64::csr::mstatus::MStatus;
 use crate::isa::riscv64::csr::CSRAccessLevel::RW;
 use crate::isa::riscv64::csr::CSRAccessLevel::{NotSupported, ROnly};
 use crate::isa::riscv64::reg::Reg;
@@ -109,20 +110,47 @@ impl CSRs {
             };
         }
 
+        macro_rules! map_s_csr {
+            // s_csr is a subset of m_csr
+            ($s_name: expr, $m_name: expr, $write_mask: expr, $ronly:expr) => {
+                insert_csr!(
+                    $s_name,
+                    map[&($m_name as u64)].0 as u64,
+                    $write_mask,
+                    $ronly
+                );
+                insert_csr_hook!($m_name, |csr, state| {
+                    state.csrs.set_n($s_name, *csr);
+                });
+                insert_csr_hook!($s_name, |csr, state| {
+                    let res = state
+                        .csrs
+                        .set_n($m_name, csr | state.csrs[$m_name] & !0b10001000100010)
+                        .unwrap();
+                    res.call_hook(state);
+                });
+            };
+        }
+
         insert_defined_csr!(satp::Satp);
         insert_csr_hook!(CSRName::satp, satp::Satp::write_hook);
-        insert_defined_csr!(mstatus::MStatus);
+
+        insert_defined_csr!(MStatus);
+        map_s_csr!(
+            CSRName::sstatus,
+            CSRName::mstatus,
+            0b11000000000100100010,
+            RW
+        );
+        insert_csr_hook!(CSRName::mstatus, |csr, state| {
+            state.csrs.set_n(CSRName::sstatus, *csr);
+            let mstatus: MStatus = (*csr).into();
+            state.memory.update_priv(&mstatus);
+        });
+
         insert_defined_csr!(mie::MIE);
-        insert_csr_hook!(CSRName::mie, |csr, state| {
-            state.csrs.set_n(CSRName::sie, *csr);
-        });
-        insert_csr!(CSRName::sie, 0, 0b10001000100010, RW);
-        insert_csr_hook!(CSRName::sie, |csr, state| {
-            state.csrs.set_n(
-                CSRName::mie,
-                csr | state.csrs[CSRName::mie] & !0b10001000100010,
-            );
-        });
+        map_s_csr!(CSRName::sie, CSRName::mie, 0b10001000100010, RW);
+
         insert_defined_csr!(mie::MIP);
 
         insert_rw_csr!(CSRName::mtvec, 0);
@@ -187,7 +215,7 @@ impl CSRs {
         check_ronly: bool,
     ) -> Option<(&mut Reg, &u64, Option<&WriteHook>)> {
         self.check_idx(idx);
-        let (csr, info) = self.csrs.get_mut(&(idx)).unwrap();
+        let (csr, info) = self.csrs.get_mut(&(idx))?;
         match info.access_level {
             CSRAccessLevel::TODO => {
                 panic!("CSR not implemented: {:#x}", idx)
@@ -253,7 +281,7 @@ impl Display for CSRs {
     }
 }
 
-#[derive(PartialEq, IntoStaticStr, Copy, Clone)]
+#[derive(PartialEq, IntoStaticStr, Copy, Clone, Debug)]
 pub enum MCauseCode {
     InstAccessFault = 1,
     IllegalInst = 2,
@@ -262,12 +290,16 @@ pub enum MCauseCode {
     StoreAMOMisaligned = 6,  // Store/AMO address misaligned
     StoreAMOAccessFault = 7, // Support misaligned access for store
     ECallM = 11,
+    InstPageFault = 12,
+    LoadPageFault = 13,
+    StoreAMOPageFault = 15,
     DeadLoop = 128, // custom
 }
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, EnumIter, EnumString, IntoStaticStr)]
 pub enum CSRName {
+    sstatus = 0x100,
     sie = 0x104,
     stvec = 0x105,
     scounteren = 0x106,

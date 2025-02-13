@@ -210,8 +210,8 @@ macro_rules! gen_load_u {
         |inst, state| {
             let addr = inst.imm.wrapping_add(inst.src1(state));
             match state.memory.read(&VAddr::new(addr), $size) {
-                Some(v) => state.regs[inst.rd] = v,
-                None => state.trap(MCauseCode::LoadAccessFault, Some(addr)),
+                Ok(v) => state.regs[inst.rd] = v,
+                Err(err) => state.trap(err, Some(addr)),
             }
         }
     };
@@ -222,8 +222,8 @@ macro_rules! gen_load {
         |inst, state| {
             let addr = inst.imm.wrapping_add(inst.src1(state));
             match state.memory.read(&VAddr::new(addr), $size) {
-                Some(v) => state.regs[inst.rd] = sign_extend64(v, 8 * $size as usize),
-                None => state.trap(MCauseCode::LoadAccessFault, Some(addr)),
+                Ok(v) => state.regs[inst.rd] = sign_extend64(v, 8 * $size as usize),
+                Err(err) => state.trap(err, Some(addr)),
             }
         }
     };
@@ -233,12 +233,11 @@ macro_rules! gen_store {
     ($size:expr) => {
         |inst, state| {
             let addr = inst.imm.wrapping_add(inst.src1(state));
-            if state
+            if let Err(err) = state
                 .memory
                 .write(&VAddr::new(addr), inst.src2(state), $size)
-                .is_err()
             {
-                state.trap(MCauseCode::StoreAMOAccessFault, Some(addr))
+                state.trap(err, Some(addr))
             }
         }
     };
@@ -357,7 +356,7 @@ macro_rules! gen_zaamo {
                 return;
             }
             match state.memory.read(&addr, $size) {
-                Some(v) => {
+                Ok(v) => {
                     let src2 = if $size == WORD {
                         inst.src2_trunc32(state)
                     } else {
@@ -370,14 +369,14 @@ macro_rules! gen_zaamo {
                         state.regs[inst.rd] = if $size == WORD { sign_ext_32to64(v) } else { v };
                     }
                 }
-                None => state.trap(MCauseCode::StoreAMOAccessFault, Some(addr.value())),
+                Err(err) => state.trap(err, Some(addr.value())),
             }
         }
     };
 }
 
 lazy_static! {
-pub static ref PATTERNS: [Pattern;76] = [
+pub static ref PATTERNS: [Pattern;77] = [
     // memory
     make_pattern("??????? ????? ????? 000 ????? 0000011", I, "lb", gen_load!(Byte)),
     make_pattern("??????? ????? ????? 100 ????? 0000011", I, "lbu", gen_load_u!(Byte)),
@@ -627,6 +626,10 @@ pub static ref PATTERNS: [Pattern;76] = [
     make_pattern(
         "??????? ????? ????? 001 ????? 0001111", I, "fence.i",
         |_inst, _state| {}
+    ),
+        make_pattern(
+        "0001001 ????? ????? 000 00000 1110011", R, "sfence.vma",
+        |_inst, _state| {} // TODO: TLB
     ),
 ];
 }
