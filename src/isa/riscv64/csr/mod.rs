@@ -93,9 +93,9 @@ impl CSRs {
                 );
             };
         }
-        macro_rules! insert_defined_csr_hook {
-            ($CSR:ty, $func:expr) => {
-                write_hooks.insert(<$CSR>::name() as u64, $func);
+        macro_rules! insert_csr_hook {
+            ($name:expr, $func:expr) => {
+                write_hooks.insert($name as u64, $func);
             };
         }
         macro_rules! insert_rw_csr {
@@ -110,14 +110,25 @@ impl CSRs {
         }
 
         insert_defined_csr!(satp::Satp);
-        insert_defined_csr_hook!(satp::Satp, satp::Satp::write_hook);
+        insert_csr_hook!(CSRName::satp, satp::Satp::write_hook);
         insert_defined_csr!(mstatus::MStatus);
         insert_defined_csr!(mie::MIE);
+        insert_csr_hook!(CSRName::mie, |csr, state| {
+            state.csrs.set_n(CSRName::sie, *csr);
+        });
+        insert_csr!(CSRName::sie, 0, 0b10001000100010, RW);
+        insert_csr_hook!(CSRName::sie, |csr, state| {
+            state.csrs.set_n(
+                CSRName::mie,
+                csr | state.csrs[CSRName::mie] & !0b10001000100010,
+            );
+        });
         insert_defined_csr!(mie::MIP);
 
         insert_rw_csr!(CSRName::mtvec, 0);
         insert_rw_csr!(CSRName::stvec, 0);
         insert_rw_csr!(CSRName::mscratch, 0);
+        insert_rw_csr!(CSRName::sscratch, 0);
         insert_rw_csr!(CSRName::mepc, 0);
         insert_rw_csr!(CSRName::sepc, 0);
         insert_rw_csr!(CSRName::mcause, 0);
@@ -257,8 +268,10 @@ pub enum MCauseCode {
 #[allow(non_camel_case_types)]
 #[derive(Debug, Copy, Clone, EnumIter, EnumString, IntoStaticStr)]
 pub enum CSRName {
+    sie = 0x104,
     stvec = 0x105,
     scounteren = 0x106,
+    sscratch = 0x140,
     sepc = 0x141,
     stval = 0x143,
 

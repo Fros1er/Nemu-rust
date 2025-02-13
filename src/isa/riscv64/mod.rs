@@ -58,13 +58,14 @@ pub struct RISCV64CpuState {
 }
 
 impl RISCV64CpuState {
-    fn new(memory: Memory) -> Self {
+    fn new(memory: Memory, reset_vector: &PAddr) -> Self {
+        let mmu = MMU::new(memory);
         Self {
             regs: Registers::new(),
             csrs: CSRs::new(),
-            pc: VAddr::new(0),
+            pc: mmu.paddr_to_vaddr(reset_vector),
             dyn_pc: None,
-            memory: MMU::new(memory),
+            memory: mmu,
             privilege: RISCV64Privilege::M,
             backtrace: Vec::new(),
             stopping: false,
@@ -175,8 +176,7 @@ impl Isa for RISCV64 {
         // let reset_addr: PAddr = CONFIG_MBASE + CONFIG_PC_RESET_OFFSET;
         let reset_addr: PAddr = PAddr::new(CONFIG_MEM_BASE.value());
         // let reset_addr: PAddr = PAddr::new(CONFIG_FIRMWARE_BASE.value());
-        let mut state = RISCV64CpuState::new(memory);
-        state.pc = reset_addr.into();
+        let mut state = RISCV64CpuState::new(memory, &reset_addr);
         Self {
             state,
             disassembler: LLVMDisassembler::new(
@@ -223,7 +223,7 @@ impl Isa for RISCV64 {
             return false;
         }
         let pc_paddr: &PAddr = &(&self.state.pc).into();
-        let inst = self.state.memory.read_if_tmp(&self.state.pc, DWORD);
+        let inst = self.state.memory.read(&self.state.pc, DWORD);
         if inst.is_none() {
             self.state
                 .trap(MCauseCode::InstAccessFault, Some(self.state.pc.value()));

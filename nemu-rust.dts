@@ -14,7 +14,7 @@
 			device_type = "cpu";
 			mmu-type = "riscv,sv39";
 			reg = <0x0>;
-			riscv,isa = "rv64imafd";
+			riscv,isa = "rv64ima";
 			riscv,pmpgranularity = <0>;
 			riscv,pmpregions = <0>;
 			status = "okay";
@@ -35,29 +35,11 @@
 		#size-cells = <1>;
 		compatible = "freechips,rocketchip-unknown-soc", "simple-bus";
 		ranges;
-		L1: error-device@3000 {
-			compatible = "sifive,error0";
-			reg = <0x3000 0x1000>;
-		};
-		L9: external-interrupts {
-			interrupt-parent = <&L5>;
-			interrupts = <1 2>;
-		};
-		L5: interrupt-controller@c000000 {
-			#interrupt-cells = <1>;
-			compatible = "riscv,plic0";
-			interrupt-controller;
-			interrupts-extended = <&L2 11 &L2 9>;
-			reg = <0xc000000 0x4000000>;
+		L6: clint@2000000 {
+			compatible = "riscv,clint0";
+			interrupts-extended = <&L2 3 &L2 7>;
+			reg = <0x2000000 0x10000>;
 			reg-names = "control";
-			riscv,max-priority = <3>;
-			riscv,ndev = <2>;
-		};
-		L11: mmio-port-axi4@60000000 {
-			#address-cells = <1>;
-			#size-cells = <1>;
-			compatible = "simple-bus";
-			ranges = <0x60000000 0x60000000 0x20000000>;
 		};
 		L0: subsystem_pbus_clock {
 			#clock-cells = <0>;

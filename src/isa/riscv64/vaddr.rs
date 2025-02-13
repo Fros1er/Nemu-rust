@@ -44,12 +44,6 @@ impl VAddr {
     }
 }
 
-impl From<PAddr> for VAddr {
-    fn from(value: PAddr) -> Self {
-        Self(value.value())
-    }
-}
-
 struct SV39 {
     lvl1_base: u64,
 }
@@ -72,16 +66,18 @@ impl MMU {
         }
     }
 
-    pub fn read_if_tmp(&self, vaddr: &VAddr, len: MemOperationSize) -> Option<u64> {
-        self.mem.read(&vaddr.into(), len)
+    pub fn paddr_to_vaddr(&self, paddr: &PAddr) -> VAddr {
+        assert!(self.translation_ctrl.is_bare);
+        VAddr::new(paddr.value())
     }
 
     pub fn read(&self, vaddr: &VAddr, len: MemOperationSize) -> Option<u64> {
-        // info!("READ {:#x}", vaddr.value());
+        assert!(self.translation_ctrl.is_bare);
         self.mem.read(&vaddr.into(), len)
     }
 
     pub fn write(&mut self, vaddr: &VAddr, data: u64, len: MemOperationSize) -> Result<(), ()> {
+        assert!(self.translation_ctrl.is_bare);
         self.mem.write(&vaddr.into(), data, len)
     }
 

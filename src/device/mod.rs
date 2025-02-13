@@ -1,3 +1,14 @@
+use crate::device::clint::{CLINT, CLINT_MMIO_START};
+use crate::device::keyboard::{Keyboard, KEYBOARD_MMIO_START};
+use crate::device::liteuart::{LiteUART, LITEUART_MMIO_START};
+use crate::device::plic::{PLIC, PLIC_MMIO_START};
+use crate::device::rtc::{RTC, RTC_MMIO_START};
+use crate::device::serial::{Serial, SERIAL_MMIO_START};
+use crate::device::timer::{Timer, TIMER_MMIO_START};
+use crate::device::vga::{
+    VGACtrl, SCREEN_H, SCREEN_W, VGA, VGA_CTL_MMIO_START, VGA_FRAME_BUF_MMIO_START,
+};
+use crate::memory::Memory;
 use lazy_static::lazy_static;
 use sdl2::event::Event;
 use sdl2::pixels::PixelFormatEnum;
@@ -9,17 +20,7 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::device::keyboard::{Keyboard, KEYBOARD_MMIO_START};
-use crate::device::liteuart::{LiteUART, LITEUART_MMIO_START};
-use crate::device::plic::{PLIC, PLIC_MMIO_START};
-use crate::device::rtc::{RTC, RTC_MMIO_START};
-use crate::device::serial::{Serial, SERIAL_MMIO_START};
-use crate::device::timer::{Timer, TIMER_MMIO_START};
-use crate::device::vga::{
-    VGACtrl, SCREEN_H, SCREEN_W, VGA, VGA_CTL_MMIO_START, VGA_FRAME_BUF_MMIO_START,
-};
-use crate::memory::Memory;
-
+mod clint;
 mod keyboard;
 mod liteuart;
 mod plic;
@@ -51,6 +52,7 @@ impl Devices {
         // let timer = Arc::new(Timer::new());
         let rtc = Arc::new(RTC::new());
         let plic = Arc::new(PLIC::new());
+        let clint = Arc::new(CLINT::new());
 
         memory.add_mmio(VGA_FRAME_BUF_MMIO_START, vga.clone());
         memory.add_mmio(VGA_CTL_MMIO_START, vga_ctrl.clone());
@@ -62,6 +64,7 @@ impl Devices {
         memory.add_mmio(TIMER_MMIO_START, glob_timer.clone());
         memory.add_mmio(RTC_MMIO_START, rtc.clone());
         memory.add_mmio(PLIC_MMIO_START, plic.clone());
+        memory.add_mmio(CLINT_MMIO_START, clint.clone());
 
         // let rvtest_serial = Arc::new(RVTestSerial::new());
         // memory.add_mmio(SERIAL_MMIO_START_RVTEST, rvtest_serial.clone());

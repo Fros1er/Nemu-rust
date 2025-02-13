@@ -377,7 +377,7 @@ macro_rules! gen_zaamo {
 }
 
 lazy_static! {
-pub static ref PATTERNS: [Pattern;74] = [
+pub static ref PATTERNS: [Pattern;76] = [
     // memory
     make_pattern("??????? ????? ????? 000 ????? 0000011", I, "lb", gen_load!(Byte)),
     make_pattern("??????? ????? ????? 100 ????? 0000011", I, "lbu", gen_load_u!(Byte)),
@@ -582,6 +582,20 @@ pub static ref PATTERNS: [Pattern;74] = [
     make_pattern("00001 ?? ????? ????? 011 ????? 0101111", R, "amoswap.d", gen_zaamo!(wrapping_add, DWORD, true)),
     make_pattern("00000 ?? ????? ????? 010 ????? 0101111", R, "amoadd.w", gen_zaamo!(wrapping_add, DWORD, false)),
     make_pattern("00000 ?? ????? ????? 011 ????? 0101111", R, "amoadd.d", gen_zaamo!(wrapping_add, DWORD, false)),
+    // zalrsc, memory mark not implemented. we assume store is always success.
+    make_pattern("00010 ?? 00000 ????? 011 ????? 0101111", R, "lr.d", gen_load!(DWORD)),
+    make_pattern("00011 ?? ????? ????? 011 ????? 0101111", R, "sc.d", |inst, state| {
+            let addr = inst.imm.wrapping_add(inst.src1(state));
+            if state
+                .memory
+                .write(&VAddr::new(addr), inst.src2(state), DWORD)
+                .is_err()
+            {
+                state.trap(MCauseCode::StoreAMOAccessFault, Some(addr))
+            } else {
+                state.regs[inst.rd] = 0;
+            }
+        }),
 
     // misc
     make_pattern(
