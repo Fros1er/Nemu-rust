@@ -11,6 +11,8 @@ use clap::Parser;
 use log::{info, warn};
 use std::process::ExitCode;
 use std::ptr::addr_of_mut;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 mod device;
 mod engine;
@@ -52,8 +54,13 @@ impl<T: Isa> Emulator<T> {
             }
             firm.len() * 4
         };
-        let device = Devices::new(&mut memory, args.no_sdl_devices); // init device
-        let mut cpu = T::new(memory, &args);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let device = Devices::new(stopped.clone(), &mut memory, args.no_sdl_devices); // init device
+        let mut cpu = T::new(stopped.clone(), memory, &args);
+        ctrlc::set_handler(move || {
+            stopped.store(true, std::sync::atomic::Ordering::Relaxed);
+        })
+        .unwrap();
 
         let difftest_ctx = if args.difftest {
             Some(DifftestContext::init(

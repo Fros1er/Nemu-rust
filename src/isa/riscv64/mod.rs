@@ -21,6 +21,9 @@ use std::cell::RefCell;
 use std::fmt::Write;
 use std::rc::Rc;
 use std::str::FromStr;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::Arc;
 use std::thread;
 use strum::IntoEnumIterator;
 use strum_macros::FromRepr;
@@ -38,7 +41,9 @@ pub struct RISCV64 {
     state: RISCV64CpuState,
     disassembler: LLVMDisassembler,
     ibuf: SetAssociativeIBuf,
+    interrupt_bits: Rc<AtomicU64>,
     stop_at_ebreak: bool,
+    stopped: Arc<AtomicBool>,
 }
 
 #[derive(PartialEq, Copy, Clone, FromRepr, Debug)]
@@ -63,6 +68,7 @@ impl RISCV64CpuState {
     fn new(memory: Memory, reset_vector: &PAddr) -> Self {
         let privilege = Rc::new(RefCell::new(RISCV64Privilege::M));
         let mmu = MMU::new(memory, privilege.clone());
+
         Self {
             regs: Registers::new(),
             csrs: CSRs::new(),
@@ -95,7 +101,10 @@ impl Drop for RISCV64CpuState {
 impl RISCV64CpuState {
     fn trap(&mut self, cause: MCauseCode, mtval_val: Option<u64>) {
         let cause_name: &'static str = (&cause).into();
-        // info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
+
+        if cause != MCauseCode::ECallM {
+            info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
+        }
 
         if cause == MCauseCode::ECallM && self.regs[a7] == 93 {
             info!("riscv-test passfail triggered");
@@ -186,7 +195,7 @@ impl RISCV64CpuState {
 }
 
 impl Isa for RISCV64 {
-    fn new(memory: Memory, args: &Args) -> Self {
+    fn new(stopped: Arc<AtomicBool>, memory: Memory, args: &Args) -> Self {
         // let reset_addr: PAddr = CONFIG_MBASE + CONFIG_PC_RESET_OFFSET;
         let reset_addr: PAddr = PAddr::new(CONFIG_MEM_BASE.value());
         // let reset_addr: PAddr = PAddr::new(CONFIG_FIRMWARE_BASE.value());
@@ -198,7 +207,9 @@ impl Isa for RISCV64 {
                 "rv64imafd_zicsr_zifencei",
             ),
             ibuf: SetAssociativeIBuf::new(),
+            interrupt_bits: Rc::new(Default::default()),
             stop_at_ebreak: !args.ignore_isa_breakpoint,
+            stopped,
         }
     }
     fn isa_logo() -> &'static [u8] {
@@ -233,7 +244,7 @@ impl Isa for RISCV64 {
 
     #[inline]
     fn isa_exec_once(&mut self) -> bool {
-        if self.state.stopping {
+        if self.state.stopping || self.stopped.load(Relaxed) {
             return false;
         }
         let inst = self.state.memory.ifetch(&self.state.pc, DWORD);

@@ -1,6 +1,5 @@
 use sdl2::keyboard::Keycode;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
 use std::time::SystemTime;
 use strum_macros::IntoStaticStr;
 
@@ -45,8 +44,8 @@ struct KeyboardEvent {
 
 pub struct Keyboard {
     keycode_map: HashMap<Keycode, NemuKeycode>,
-    key_queue: Mutex<VecDeque<KeyboardEvent>>,
-    mem: Mutex<[u8; 8]>,
+    key_queue: VecDeque<KeyboardEvent>,
+    mem: [u8; 8],
 }
 
 impl Keyboard {
@@ -54,25 +53,24 @@ impl Keyboard {
         let keycode_map = build_keymap();
         Self {
             keycode_map,
-            key_queue: Mutex::new(VecDeque::new()),
-            mem: Mutex::new([0; 8]), // mem[3:0]: keycode, mem[7:4]: write anything to set keycode to none
+            key_queue: VecDeque::new(),
+            mem: [0; 8], // mem[3:0]: keycode, mem[7:4]: write anything to set keycode to none
         }
     }
 
-    fn write_key(&self, keycode: u32) {
+    fn write_key(&mut self, keycode: u32) {
         unsafe {
-            let addr = self.mem.lock().unwrap().get_unchecked_mut(0) as *mut u8;
+            let addr = self.mem.get_unchecked_mut(0) as *mut u8;
             (addr as *mut u32).write(keycode);
         }
     }
 
-    pub fn update(&self) {
-        let mut key_queue = self.key_queue.lock().unwrap();
+    pub fn update(&mut self) {
         let now = SystemTime::now();
-        while let Some(event) = key_queue.front() {
+        while let Some(event) = self.key_queue.front() {
             if let Ok(duration) = now.duration_since(event.time) {
                 if duration.as_millis() > 100 {
-                    key_queue.pop_front();
+                    self.key_queue.pop_front();
                 } else {
                     break;
                 }
@@ -80,24 +78,23 @@ impl Keyboard {
                 break;
             }
         }
-        let next = match key_queue.front() {
+        let next = match self.key_queue.front() {
             Some(event) => event.keycode,
             None => NemuKeycode::None as u32,
         };
         self.write_key(next);
     }
 
-    pub fn send_key(&self, keycode: Keycode, is_down: bool) {
+    pub fn send_key(&mut self, keycode: Keycode, is_down: bool) {
         if let Some(keycode) = self.keycode_map.get(&keycode) {
             let mut keycode = keycode.clone() as u32;
             if is_down {
                 keycode |= 0x8000;
             }
-            let mut key_queue = self.key_queue.lock().unwrap();
-            if key_queue.is_empty() {
+            if self.key_queue.is_empty() {
                 self.write_key(keycode)
             }
-            key_queue.push_back(KeyboardEvent {
+            self.key_queue.push_back(KeyboardEvent {
                 keycode,
                 time: SystemTime::now(),
             })
@@ -110,19 +107,18 @@ impl IOMap for Keyboard {
         8
     }
     fn read(&self, offset: usize, len: MemOperationSize) -> u64 {
-        unsafe { len.read_sized(self.mem.lock().unwrap().get_unchecked(offset)) }
+        unsafe { len.read_sized(self.mem.get_unchecked(offset)) }
     }
 
-    fn write(&self, offset: usize, data: u64, _size: MemOperationSize) {
+    fn write(&mut self, offset: usize, data: u64, _size: MemOperationSize) {
         if offset < 4 {
             panic!("Write to keyboard keycode is not allowed")
         }
         if data != 0 {
-            let mut key_queue = self.key_queue.lock().unwrap();
-            if !key_queue.is_empty() {
-                key_queue.pop_front();
+            if !self.key_queue.is_empty() {
+                self.key_queue.pop_front();
             }
-            let next = match key_queue.front() {
+            let next = match self.key_queue.front() {
                 Some(event) => event.keycode,
                 None => NemuKeycode::None as u32,
             };

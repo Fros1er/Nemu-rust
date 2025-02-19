@@ -22,7 +22,7 @@ pub struct MStatus {
     FS: usize, // 0
     #[bits(2)]
     XS: usize, // 0
-    MPRV: bool, // MMU: Enable MMU even in M Mode
+    pub MPRV: bool, // MMU: Enable MMU even in M Mode
     pub SUM: bool, // MMU: S-mode memory accesses to pages that are accessible by U-mode is permitted
     pub MXR: bool, // MMU: loads from pages marked executable will succeed.
     TVM: bool, // VIRT: attempts to read or write the satp CSR or execute an SFENCE.VMA or SINVAL.VMA instruction while executing in S-mode will raise an illegal-instruction exception.
@@ -50,7 +50,7 @@ impl MStatus {
             self.set_MIE(false);
             self.set_MPP(from as usize);
         } else {
-            assert!(from != RISCV64Privilege::M);
+            assert_ne!(from, RISCV64Privilege::M);
             self.set_SPIE(self.SIE());
             self.set_SIE(false);
             self.set_SPP(from == RISCV64Privilege::S);

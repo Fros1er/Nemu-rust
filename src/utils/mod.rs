@@ -21,11 +21,15 @@ pub mod tests {
     use crate::memory::Memory;
     use crate::monitor::Args;
     use crate::Emulator;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
 
     pub fn fake_emulator() -> Emulator<RISCV64> {
         let mut memory = Memory::new(); // init mem
-        let device = Devices::new(&mut memory, false); // init device
+        let stopped = Arc::new(AtomicBool::new(false));
+        let device = Devices::new(stopped.clone(), &mut memory, false); // init device
         let cpu = RISCV64::new(
+            stopped,
             memory,
             &Args {
                 ..Default::default()

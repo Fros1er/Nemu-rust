@@ -38,7 +38,7 @@ impl IOMap for Serial {
         1
     }
 
-    fn write(&self, _offset: usize, data: u64, _len: MemOperationSize) {
+    fn write(&mut self, _offset: usize, data: u64, _len: MemOperationSize) {
         print!("{}", data as u8 as char);
         let _ = io::stdout().flush();
     }

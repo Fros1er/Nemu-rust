@@ -33,7 +33,7 @@ impl IOMap for PLIC {
         0
     }
 
-    fn write(&self, offset: usize, data: u64, len: MemOperationSize) {
+    fn write(&mut self, offset: usize, data: u64, len: MemOperationSize) {
         if offset % (len as usize) != 0 {
             panic!("misaligned access of PLIC")
         }

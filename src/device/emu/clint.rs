@@ -40,7 +40,7 @@ impl IOMap for CLINT {
                 len.read_sized(ptr as *const u8)
             }
             MTIME_OFFSET => {
-                let time = glob_timer.since_boot_us();
+                let time = glob_timer.lock().unwrap().since_boot_us();
                 let ptr = &time as *const u64;
                 len.read_sized(ptr as *const u8)
             }
@@ -48,7 +48,7 @@ impl IOMap for CLINT {
         }
     }
 
-    fn write(&self, offset: usize, data: u64, len: MemOperationSize) {
+    fn write(&mut self, offset: usize, data: u64, len: MemOperationSize) {
         if offset % (len as usize) != 0 {
             panic!("misaligned access of clint")
         }

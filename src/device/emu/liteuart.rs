@@ -39,7 +39,7 @@ impl IOMap for LiteUART {
         }
     }
 
-    fn write(&self, offset: usize, data: u64, _len: MemOperationSize) {
+    fn write(&mut self, offset: usize, data: u64, _len: MemOperationSize) {
         // println!("liteuart memwrite ofs {}", offset);
         match offset {
             0 => {

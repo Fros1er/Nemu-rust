@@ -69,6 +69,7 @@ pub struct TranslationCtrl {
     privilege: Rc<RefCell<RISCV64Privilege>>,
     SUM: bool,
     MXR: bool,
+    MPRV: bool,
 }
 
 pub(crate) struct MMU {
@@ -124,7 +125,7 @@ enum TranslationErr {
 }
 
 #[derive(PartialEq)]
-enum MemoryAccessType {
+pub enum MemoryAccessType {
     R,
     W,
     X,
@@ -144,8 +145,9 @@ impl MMU {
     }
 
     fn translate(&self, vaddr: &VAddr, typ: MemoryAccessType) -> Result<PAddr, TranslationErr> {
-        if *self.translation_ctrl.privilege.borrow() == RISCV64Privilege::M
-            || self.translation_ctrl.is_bare
+        if self.translation_ctrl.is_bare
+            || (*self.translation_ctrl.privilege.borrow() == RISCV64Privilege::M
+                && !(typ != MemoryAccessType::X && self.translation_ctrl.MPRV))
         {
             return Ok(PAddr::new(vaddr.value()));
         }
@@ -279,6 +281,7 @@ impl MMU {
     pub fn update_priv(&mut self, mstatus: &MStatus) {
         self.translation_ctrl.SUM = mstatus.SUM();
         self.translation_ctrl.MXR = mstatus.MXR();
+        self.translation_ctrl.MPRV = mstatus.MPRV();
     }
 }
 
@@ -290,6 +293,7 @@ impl TranslationCtrl {
             privilege,
             SUM: false,
             MXR: false,
+            MPRV: false,
         }
     }
 }

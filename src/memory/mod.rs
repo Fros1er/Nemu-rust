@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::{init_mem, PAddr, FIRMWARE_LEFT, FIRMWARE_RIGHT, PMEM_LEFT, PMEM_RIGHT};
-use crate::utils::configs::{CONFIG_MEM_SIZE, CONFIG_FIRMWARE_SIZE};
+use crate::utils::configs::{CONFIG_FIRMWARE_SIZE, CONFIG_MEM_SIZE};
 
 pub mod paddr;
 
@@ -17,7 +17,7 @@ pub trait IOMap {
     /// guarantee ofs is inside self.mem
     ///
     /// Use interior mutability pattern for flexibility
-    fn write(&self, _offset: usize, _data: u64, _len: MemOperationSize) {
+    fn write(&mut self, _offset: usize, _data: u64, _len: MemOperationSize) {
         panic!("Write should not happen");
     }
 }
@@ -25,11 +25,11 @@ pub trait IOMap {
 pub struct IOMapEntry {
     left: PAddr,
     right: PAddr,
-    device: Arc<dyn IOMap>,
+    device: Arc<Mutex<dyn IOMap>>,
 }
 
 impl IOMapEntry {
-    fn new(left: PAddr, right: PAddr, device: Arc<dyn IOMap>) -> Self {
+    fn new(left: PAddr, right: PAddr, device: Arc<Mutex<dyn IOMap>>) -> Self {
         Self {
             left,
             right,
@@ -88,8 +88,8 @@ impl Memory {
         None
     }
 
-    pub fn add_mmio(&mut self, left: PAddr, device: Arc<dyn IOMap>) {
-        let right = left.clone() + device.len() as u64;
+    pub fn add_mmio(&mut self, left: PAddr, device: Arc<Mutex<dyn IOMap>>) {
+        let right = left.clone() + device.lock().unwrap().len() as u64;
         let io_map = IOMapEntry::new(left, right, device);
         if Self::in_pmem(&io_map.left) && Self::in_pmem(&io_map.right) {
             panic!(

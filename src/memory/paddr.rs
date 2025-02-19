@@ -95,7 +95,13 @@ impl Memory {
             return Some(len.read_sized(ptr));
         }
         if let Some(iomap) = self.find_iomap(paddr) {
-            return Some(iomap.device.read(iomap.paddr_to_device_mem_idx(paddr), len));
+            return Some(
+                iomap
+                    .device
+                    .lock()
+                    .unwrap()
+                    .read(iomap.paddr_to_device_mem_idx(paddr), len),
+            );
         }
         info!("MEM & IO READ ERR: {:#x}", paddr.0);
         None
@@ -111,6 +117,8 @@ impl Memory {
             Some(iomap) => {
                 iomap
                     .device
+                    .lock()
+                    .unwrap()
                     .write(iomap.paddr_to_device_mem_idx(paddr), data, len);
                 Ok(())
             }

@@ -234,7 +234,7 @@ impl CSRs {
         let hook = self.write_hooks.get(&idx);
 
         if idx == CSRName::time as u64 {
-            self.time = glob_timer.since_boot_us();
+            self.time = glob_timer.lock().unwrap().since_boot_us();
             return Some((&mut self.time, &info.write_mask, hook));
         }
 
