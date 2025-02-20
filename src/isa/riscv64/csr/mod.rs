@@ -152,6 +152,7 @@ impl CSRs {
         map_s_csr!(CSRName::sie, CSRName::mie, 0b10001000100010, RW);
 
         insert_defined_csr!(mie::MIP);
+        map_s_csr!(CSRName::sip, CSRName::mip, 0b10001000100010, RW);
 
         insert_rw_csr!(CSRName::mtvec, 0);
         insert_rw_csr!(CSRName::stvec, 0);
@@ -160,6 +161,7 @@ impl CSRs {
         insert_rw_csr!(CSRName::mepc, 0);
         insert_rw_csr!(CSRName::sepc, 0);
         insert_rw_csr!(CSRName::mcause, 0);
+        insert_rw_csr!(CSRName::scause, 0);
         insert_rw_csr!(CSRName::mtval, 0);
         insert_rw_csr!(CSRName::stval, 0);
         insert_rw_csr!(CSRName::mideleg, 0);
@@ -241,6 +243,10 @@ impl CSRs {
         Some((csr, &info.write_mask, hook))
     }
 
+    pub fn set_zero_fast(&mut self, idx: CSRName) {
+        self.csrs.get_mut(&(idx as u64)).unwrap().0 = 0;
+    }
+
     pub fn set_n(&mut self, idx: CSRName, val: u64) -> Option<CSROpResult> {
         let (csr, mask, hook) = self.get_csr_mut(idx as u64, true)?;
         let res = *csr;
@@ -282,7 +288,9 @@ impl Display for CSRs {
 }
 
 #[derive(PartialEq, IntoStaticStr, Copy, Clone, Debug)]
+#[repr(u64)]
 pub enum MCauseCode {
+    None = 0,
     InstAccessFault = 1,
     IllegalInst = 2,
     Breakpoint = 3,
@@ -294,6 +302,10 @@ pub enum MCauseCode {
     LoadPageFault = 13,
     StoreAMOPageFault = 15,
     DeadLoop = 128, // custom
+    STimerInt = 0x8000000000000005,
+    MTimerInt = 0x8000000000000007,
+    SExtInt = 0x8000000000000009,
+    MExtInt = 0x800000000000000b,
 }
 
 #[allow(non_camel_case_types)]
@@ -305,7 +317,9 @@ pub enum CSRName {
     scounteren = 0x106,
     sscratch = 0x140,
     sepc = 0x141,
+    scause = 0x142,
     stval = 0x143,
+    sip = 0x144,
 
     satp = 0x180,
     mstatus = 0x300,

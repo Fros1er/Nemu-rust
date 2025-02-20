@@ -3,13 +3,18 @@ use crate::memory::Memory;
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 use crate::monitor::Args;
 use riscv64::vaddr::VAddr;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 
 pub(crate) mod riscv64;
 
 pub trait Isa {
-    fn new(stopped: Arc<AtomicBool>, memory: Memory, args: &Args) -> Self;
+    fn new(
+        stopped: Arc<AtomicBool>,
+        memory: Memory,
+        cpu_interrupt_bits: Arc<AtomicU64>,
+        args: &Args,
+    ) -> Self;
 
     // monitor
     fn isa_logo() -> &'static [u8];

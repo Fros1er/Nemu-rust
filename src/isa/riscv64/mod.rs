@@ -1,7 +1,9 @@
 use crate::isa::riscv64::csr::mstatus::MStatus;
 use crate::isa::riscv64::csr::CSRName::{
-    mcause, medeleg, mepc, mstatus, mtval, mtvec, sepc, stvec,
+    mcause, medeleg, mepc, mideleg, mie, mip, mstatus, mtval, mtvec, scause, sepc, sie, sip,
+    sstatus, stvec,
 };
+use crate::isa::riscv64::csr::MCauseCode::{MExtInt, MTimerInt, SExtInt, STimerInt};
 use crate::isa::riscv64::csr::{CSRName, CSRs, MCauseCode};
 use crate::isa::riscv64::ibuf::SetAssociativeIBuf;
 use crate::isa::riscv64::inst::PATTERNS;
@@ -16,12 +18,13 @@ use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 use crate::monitor::Args;
 use crate::utils::configs::CONFIG_MEM_BASE;
 use crate::utils::disasm::LLVMDisassembler;
+use chumsky::prelude::todo;
 use log::{error, info, warn};
 use std::cell::RefCell;
 use std::fmt::Write;
 use std::rc::Rc;
 use std::str::FromStr;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::thread;
@@ -41,7 +44,7 @@ pub struct RISCV64 {
     state: RISCV64CpuState,
     disassembler: LLVMDisassembler,
     ibuf: SetAssociativeIBuf,
-    interrupt_bits: Rc<AtomicU64>,
+    cpu_interrupt_bits: Arc<AtomicU64>,
     stop_at_ebreak: bool,
     stopped: Arc<AtomicBool>,
 }
@@ -62,24 +65,7 @@ pub struct RISCV64CpuState {
     privilege: Rc<RefCell<RISCV64Privilege>>,
     backtrace: Vec<u64>,
     stopping: bool,
-}
-
-impl RISCV64CpuState {
-    fn new(memory: Memory, reset_vector: &PAddr) -> Self {
-        let privilege = Rc::new(RefCell::new(RISCV64Privilege::M));
-        let mmu = MMU::new(memory, privilege.clone());
-
-        Self {
-            regs: Registers::new(),
-            csrs: CSRs::new(),
-            pc: mmu.paddr_to_vaddr(reset_vector),
-            dyn_pc: None,
-            memory: mmu,
-            privilege,
-            backtrace: Vec::new(),
-            stopping: false,
-        }
-    }
+    last_interrupt: u64,
 }
 
 impl Drop for RISCV64CpuState {
@@ -99,10 +85,144 @@ impl Drop for RISCV64CpuState {
 }
 
 impl RISCV64CpuState {
-    fn trap(&mut self, cause: MCauseCode, mtval_val: Option<u64>) {
-        let cause_name: &'static str = (&cause).into();
+    fn new(memory: Memory, reset_vector: &PAddr) -> Self {
+        let privilege = Rc::new(RefCell::new(RISCV64Privilege::M));
+        let mmu = MMU::new(memory, privilege.clone());
 
+        Self {
+            regs: Registers::new(),
+            csrs: CSRs::new(),
+            pc: mmu.paddr_to_vaddr(reset_vector),
+            dyn_pc: None,
+            memory: mmu,
+            privilege,
+            backtrace: Vec::new(),
+            stopping: false,
+            last_interrupt: 0,
+        }
+    }
+    pub(crate) fn handle_interrupt(&mut self, interrupt_bits: u64) {
+        if interrupt_bits != self.last_interrupt {
+            self.last_interrupt = interrupt_bits;
+            if interrupt_bits == 0 {
+                self.csrs.set_zero_fast(mip);
+                self.csrs.set_zero_fast(sip);
+            } else {
+                self.csrs.set_n(mip, interrupt_bits);
+                self.csrs.set_n(sip, interrupt_bits);
+            }
+        }
+        if interrupt_bits == 0 {
+            return;
+        }
+
+        // interrupt handle
+        let prev_priv = *self.privilege.borrow();
+        let mut goto_s_mode = false;
+        let mut cause = MCauseCode::None;
+
+        let mideleg_set = self.csrs[mideleg] & interrupt_bits != 0;
+        if prev_priv != RISCV64Privilege::M {
+            if mideleg_set
+                && (prev_priv == RISCV64Privilege::U
+                    || MStatus::from_bits(self.csrs[mstatus]).SIE()) // if S, check SIE. if U, ignore SIE
+                && (interrupt_bits & self.csrs[sie] != 0)
+            {
+                goto_s_mode = true;
+                if interrupt_bits & (1 << 5) != 0 {
+                    cause = STimerInt;
+                } else if interrupt_bits & (1 << 9) != 0 {
+                    cause = SExtInt;
+                } else {
+                    panic!(
+                        "Unknown S mode interrupt: {}, sie: {}",
+                        interrupt_bits, self.csrs[sie]
+                    )
+                }
+            }
+        } else {
+            if !MStatus::from_bits(self.csrs[mstatus]).MIE() {
+                return;
+            }
+        }
+
+        if !goto_s_mode {
+            if (interrupt_bits & self.csrs[mie] == 0) || mideleg_set {
+                return;
+            }
+
+            if interrupt_bits & (1 << 7) != 0 {
+                cause = MTimerInt;
+            } else if interrupt_bits & (1 << 11) != 0 {
+                cause = MExtInt;
+            } else {
+                panic!(
+                    "Unknown M mode interrupt: {}, mie: {}",
+                    interrupt_bits, self.csrs[mie]
+                )
+            }
+        }
+
+        if cause == MCauseCode::None {
+            panic!(
+                "Unknown interrupt: {}, mie: {}",
+                interrupt_bits, self.csrs[mie]
+            )
+        }
+
+        let next_priv = if goto_s_mode {
+            RISCV64Privilege::S
+        } else {
+            RISCV64Privilege::M
+        };
+        info!(
+            "interrupt {:?}, from {:?} to {:?}",
+            cause, prev_priv, next_priv
+        );
+        self.trap_update_csrs(cause, prev_priv, next_priv, None);
+    }
+
+    fn trap_update_csrs(
+        &mut self,
+        cause: MCauseCode,
+        prev_priv: RISCV64Privilege,
+        next_priv: RISCV64Privilege,
+        mtval_val: Option<u64>,
+    ) {
+        macro_rules! set_csr {
+            ($csr:expr, $val:expr) => {
+                let res = self.csrs.set_n($csr, $val);
+                if let Some(res) = res {
+                    res.call_hook(self)
+                }
+            };
+        }
+        // update mstatus
+        let mut mstatus_reg: MStatus = self.csrs[mstatus].into();
+        mstatus_reg.update_when_trap(prev_priv, next_priv);
+        self.csrs.set_n(mstatus, mstatus_reg.into());
+
+        if next_priv == RISCV64Privilege::M {
+            set_csr!(mepc, self.pc.value());
+            set_csr!(mcause, cause as u64);
+            self.dyn_pc = Some(VAddr::new(self.csrs[mtvec].into()));
+            if let Some(val) = mtval_val {
+                set_csr!(mtval, val);
+            }
+        } else {
+            set_csr!(sepc, self.pc.value());
+            set_csr!(scause, cause as u64);
+            self.dyn_pc = Some(VAddr::new(self.csrs[stvec].into()));
+            let cause_name: &'static str = (&cause).into();
+            info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
+            todo!("delegate trap to S mode")
+        }
+        self.privilege.replace(next_priv);
+    }
+
+    fn trap(&mut self, cause: MCauseCode, mtval_val: Option<u64>) {
         if cause != MCauseCode::ECallM {
+            let cause_name: &'static str = (&cause).into();
             info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
         }
 
@@ -114,15 +234,6 @@ impl RISCV64CpuState {
                 info!("test case {} failed", self.regs[a0]);
             }
             self.stopping = true;
-        }
-
-        macro_rules! set_csr {
-            ($csr:expr, $val:expr) => {
-                let res = self.csrs.set_n($csr, $val);
-                if let Some(res) = res {
-                    res.call_hook(self)
-                }
-            };
         }
 
         let is_deleg = *self.privilege.borrow() != RISCV64Privilege::M
@@ -139,24 +250,7 @@ impl RISCV64CpuState {
         //     self.csrs[medeleg], is_deleg, prev_priv, next_priv
         // );
 
-        // update mstatus
-        let mut mstatus_reg: MStatus = self.csrs[mstatus].into();
-        mstatus_reg.update_when_trap(prev_priv, next_priv);
-        self.csrs.set_n(mstatus, mstatus_reg.into());
-
-        if next_priv == RISCV64Privilege::M {
-            set_csr!(mepc, self.pc.value());
-            set_csr!(mcause, cause as u64);
-            self.dyn_pc = Some(VAddr::new(self.csrs[mtvec].into()));
-            if let Some(val) = mtval_val {
-                set_csr!(mtval, val);
-            }
-        } else {
-            self.dyn_pc = Some(VAddr::new(self.csrs[stvec].into()));
-            info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
-            todo!("delegate trap to S mode")
-        }
-        self.privilege.replace(next_priv);
+        self.trap_update_csrs(cause, prev_priv, next_priv, mtval_val);
 
         if self.csrs[mtvec] == 0 {
             info!("mtvec unset. Stopping.");
@@ -195,7 +289,12 @@ impl RISCV64CpuState {
 }
 
 impl Isa for RISCV64 {
-    fn new(stopped: Arc<AtomicBool>, memory: Memory, args: &Args) -> Self {
+    fn new(
+        stopped: Arc<AtomicBool>,
+        memory: Memory,
+        cpu_interrupt_bits: Arc<AtomicU64>,
+        args: &Args,
+    ) -> Self {
         // let reset_addr: PAddr = CONFIG_MBASE + CONFIG_PC_RESET_OFFSET;
         let reset_addr: PAddr = PAddr::new(CONFIG_MEM_BASE.value());
         // let reset_addr: PAddr = PAddr::new(CONFIG_FIRMWARE_BASE.value());
@@ -207,7 +306,7 @@ impl Isa for RISCV64 {
                 "rv64imafd_zicsr_zifencei",
             ),
             ibuf: SetAssociativeIBuf::new(),
-            interrupt_bits: Rc::new(Default::default()),
+            cpu_interrupt_bits,
             stop_at_ebreak: !args.ignore_isa_breakpoint,
             stopped,
         }
@@ -247,6 +346,7 @@ impl Isa for RISCV64 {
         if self.state.stopping || self.stopped.load(Relaxed) {
             return false;
         }
+
         let inst = self.state.memory.ifetch(&self.state.pc, DWORD);
         match inst {
             Err(err) => {
@@ -285,6 +385,7 @@ impl Isa for RISCV64 {
                 pattern.exec(decode, &mut self.state);
             }
         }
+
         match &self.state.dyn_pc {
             Some(pc) => {
                 if pc.value() == 0 {
@@ -304,6 +405,24 @@ impl Isa for RISCV64 {
             info!("a0: {:#x}", self.state.regs[a0]);
             return false;
         }
+
+        self.state
+            .handle_interrupt(self.cpu_interrupt_bits.load(SeqCst));
+        if let Some(pc) = &self.state.dyn_pc {
+            // TODO: fix dup code
+            if pc.value() == 0 {
+                warn!(
+                    "Jump to address 0. Current pc vaddr: {:#x}",
+                    self.state.pc.value()
+                );
+            }
+            if pc.value() == self.state.pc.value() {
+                panic!("deadloop at {:#x}", pc.value())
+            }
+            self.state.pc = *pc;
+            self.state.dyn_pc = None;
+        }
+
         true
     }
 

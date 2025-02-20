@@ -2,7 +2,13 @@ use crate::device::glob_timer;
 use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::PAddr;
 use crate::memory::IOMap;
-use std::cell::RefCell;
+use log::info;
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
+use std::time::Duration;
+use std::{sync, thread};
 
 pub const CLINT_MMIO_START: PAddr = PAddr::new(0x2000000);
 
@@ -11,13 +17,37 @@ const MTIMECMP_OFFSET: usize = 0x4000;
 const MTIME_OFFSET: usize = 0xBFF8;
 
 pub struct CLINT {
-    mtimecmp: RefCell<u64>,
+    // cpu_interrupt_bits: Arc<AtomicU64>,
+    mtimecmp_update_notify: Sender<()>,
+    mtimecmp: Arc<AtomicU64>,
 }
 
 impl CLINT {
-    pub fn new() -> Self {
+    pub fn new(cpu_interrupt_bits: Arc<AtomicU64>, stopped: Arc<AtomicBool>) -> Self {
+        let (tx, rx) = sync::mpsc::channel::<()>();
+
+        let mtimecmp = Arc::new(AtomicU64::new(1145141919810));
+        let mtimecmp_clone = mtimecmp.clone();
+        thread::spawn(move || {
+            while !stopped.load(Relaxed) {
+                let mtimecmp = mtimecmp_clone.load(SeqCst);
+                let now = glob_timer.lock().unwrap().since_boot_us();
+                if mtimecmp > now {
+                    // info!("mtimecmp({}) > now({})", mtimecmp, now);
+                    cpu_interrupt_bits.fetch_and(!0b10000000, SeqCst);
+                    let _ = rx.recv_timeout(Duration::from_micros(mtimecmp - now));
+                } else {
+                    // info!("mtimecmp({}) <= now({})", mtimecmp, now);
+                    cpu_interrupt_bits.fetch_or(0b10000000, SeqCst);
+                    let _ = rx.recv_timeout(Duration::from_micros(now - mtimecmp));
+                }
+            }
+        });
+
         Self {
-            mtimecmp: RefCell::new(0),
+            // cpu_interrupt_bits,
+            mtimecmp_update_notify: tx,
+            mtimecmp,
         }
     }
 }
@@ -35,15 +65,8 @@ impl IOMap for CLINT {
             MSIP_OFFSET => {
                 todo!("read msip");
             }
-            MTIMECMP_OFFSET => {
-                let ptr = &*self.mtimecmp.borrow_mut() as *const u64;
-                len.read_sized(ptr as *const u8)
-            }
-            MTIME_OFFSET => {
-                let time = glob_timer.lock().unwrap().since_boot_us();
-                let ptr = &time as *const u64;
-                len.read_sized(ptr as *const u8)
-            }
+            MTIMECMP_OFFSET => len.read_val(self.mtimecmp.load(SeqCst)),
+            MTIME_OFFSET => len.read_val(glob_timer.lock().unwrap().since_boot_us()),
             _ => 0,
         }
     }
@@ -59,12 +82,10 @@ impl IOMap for CLINT {
                 }
             }
             MTIMECMP_OFFSET => {
-                let tmp = &mut *self.mtimecmp.borrow_mut();
-                let ptr = tmp as *mut u64;
-                len.write_sized(data, ptr as *mut u8);
-                if data != 0u64.wrapping_sub(1) {
-                    todo!("write mtimecmp val: {}", data)
-                }
+                self.mtimecmp.store(len.read_val(data), SeqCst);
+                println!("mtime: {}", glob_timer.lock().unwrap().since_boot_us());
+                println!("write mtimecmp val: {}", data);
+                self.mtimecmp_update_notify.send(()).unwrap();
             }
             MTIME_OFFSET => {
                 todo!("write mtime val: {}", data)

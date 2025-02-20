@@ -12,7 +12,6 @@ use crate::memory::Memory;
 use lazy_static::lazy_static;
 use sdl2::event::Event;
 use sdl2::pixels::PixelFormatEnum;
-use std::rc::Rc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
@@ -25,7 +24,7 @@ mod emu;
 pub struct Devices {
     stopped: Arc<AtomicBool>,
     update_thread: JoinHandle<()>,
-    interrupt_bits: Rc<AtomicU64>,
+    pub cpu_interrupt_bits: Arc<AtomicU64>,
 }
 
 lazy_static! {
@@ -35,6 +34,7 @@ lazy_static! {
 impl Devices {
     pub fn new(stopped: Arc<AtomicBool>, memory: &mut Memory, _no_sdl: bool) -> Self {
         let stopped_clone = stopped.clone();
+        let cpu_interrupt_bits = Arc::new(AtomicU64::new(0));
 
         let vga = Arc::new(Mutex::new(VGA::new()));
         let vga_ctrl = Arc::new(Mutex::new(VGACtrl::new()));
@@ -43,7 +43,14 @@ impl Devices {
         let uart16550 = Arc::new(Mutex::new(UART16550::new(stopped.clone())));
         let rtc = Arc::new(Mutex::new(RTC::new()));
         let plic = Arc::new(Mutex::new(PLIC::new()));
-        let clint = Arc::new(Mutex::new(CLINT::new()));
+        let clint = Arc::new(Mutex::new(CLINT::new(
+            cpu_interrupt_bits.clone(),
+            stopped.clone(),
+        )));
+
+        plic.lock()
+            .unwrap()
+            .register_interrupt(uart16550.lock().unwrap().interrupt_bits.clone());
 
         memory.add_mmio(VGA_FRAME_BUF_MMIO_START, vga.clone());
         memory.add_mmio(VGA_CTL_MMIO_START, vga_ctrl.clone());
@@ -111,10 +118,7 @@ impl Devices {
         });
 
         Self {
-            // vga,
-            // keyboard,
-            // timer,
-            interrupt_bits: Rc::new(AtomicU64::new(0x0)),
+            cpu_interrupt_bits,
             stopped: stopped_clone,
             update_thread,
         }

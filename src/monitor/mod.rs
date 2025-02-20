@@ -3,7 +3,7 @@ pub mod sdb;
 use crate::memory::Memory;
 use crate::utils::configs::{CONFIG_FIRMWARE_SIZE, CONFIG_MEM_SIZE};
 use clap::Parser;
-use log::LevelFilter;
+use log::{info, LevelFilter};
 use simplelog::{Config, SimpleLogger, WriteLogger};
 use std::fs::File;
 use std::io::Read;
@@ -73,6 +73,7 @@ pub(crate) fn load_firmware(img_file: &String, memory: &mut Memory) -> usize {
 }
 
 pub(crate) fn load_img(img_file: &String, memory: &mut Memory) -> usize {
+    info!("loading image {}", img_file);
     let path = Path::new(img_file);
     let mut f = File::open(path).unwrap();
     let size = f.metadata().unwrap().len();

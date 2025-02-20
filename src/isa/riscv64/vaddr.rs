@@ -29,6 +29,14 @@ pub enum MemOperationSize {
 }
 
 impl MemOperationSize {
+    pub fn read_val(&self, dst: u64) -> u64 {
+        match self {
+            MemOperationSize::Byte => dst as u8 as u64,
+            MemOperationSize::WORD => dst as u16 as u64,
+            MemOperationSize::DWORD => dst as u32 as u64,
+            MemOperationSize::QWORD => dst,
+        }
+    }
     pub fn read_sized(&self, dst: *const u8) -> u64 {
         match self {
             MemOperationSize::Byte => unsafe { dst.read() as u64 },

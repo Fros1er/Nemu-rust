@@ -7,8 +7,8 @@ use ringbuf::traits::*;
 use ringbuf::{CachingCons, CachingProd, HeapRb, SharedRb};
 use std::cell::UnsafeCell;
 use std::process::Command;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -20,11 +20,17 @@ struct LCR {
     dlab_en: bool,
 }
 
+struct IER {
+    data_ready_int_en: Arc<AtomicBool>,
+}
+
 pub struct UART16550 {
     in_rb: UnsafeCell<CachingCons<Arc<SharedRb<Heap<u8>>>>>,
     out_rb: UnsafeCell<CachingProd<Arc<SharedRb<Heap<u8>>>>>,
     out_notify: Arc<tokio::sync::Notify>,
+    pub interrupt_bits: Arc<AtomicU64>,
     lcr: LCR,
+    ier: IER,
     mem: [u8; 16],
 }
 
@@ -37,6 +43,12 @@ impl UART16550 {
         let notify_clone = notify.clone();
 
         let stopped_clone = stopped.clone();
+
+        let interrupt_bits = Arc::new(AtomicU64::new(0));
+        let interrupt_bits_clone = interrupt_bits.clone();
+
+        let data_ready_int_en = Arc::new(AtomicBool::new(false));
+        let data_ready_int_en_clone = data_ready_int_en.clone();
 
         let _tokio_thread = thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -60,6 +72,9 @@ impl UART16550 {
                         let mut now = 0;
                         while now < n {
                             now += in_prod.push_slice(&buf[now..n]);
+                        }
+                        if data_ready_int_en_clone.load(SeqCst) && n > 0 {
+                            interrupt_bits_clone.fetch_or(1, SeqCst);
                         }
                     }
                 });
@@ -92,10 +107,12 @@ impl UART16550 {
             in_rb: UnsafeCell::new(in_cons),
             out_rb: UnsafeCell::new(out_prod),
             out_notify: notify_clone,
+            interrupt_bits,
             lcr: LCR {
                 word_len: 0,
                 dlab_en: false,
             },
+            ier: IER { data_ready_int_en },
             mem: [0; 16],
         }
     }
@@ -108,7 +125,14 @@ impl IOMap for UART16550 {
     fn read(&self, offset: usize, len: MemOperationSize) -> u64 {
         assert!(len == MemOperationSize::Byte);
         match offset {
-            0 => unsafe { (*self.in_rb.get()).try_pop().unwrap_or(0) as u64 },
+            0 => unsafe {
+                let rb = &mut *self.in_rb.get();
+                let res = rb.try_pop().unwrap_or(0) as u64;
+                if self.ier.data_ready_int_en.load(SeqCst) && rb.is_empty() {
+                    self.interrupt_bits.store(0, Ordering::SeqCst);
+                }
+                res
+            },
             5 => 0x20, // lsr
             _ => todo!("uart16550 ofs {}", offset),
         }
@@ -142,10 +166,13 @@ impl IOMap for UART16550 {
             }
             // IER
             1 => {
-                assert_eq!(data, 0); // disable Interrupt
+                assert_eq!(data & (!0x1), 0); // only support data-ready interrupt
+                self.ier.data_ready_int_en.store(true, SeqCst);
             }
             // FCR
-            2 => {}
+            2 => {
+                // assert_eq!(data & (!0x1), 0); // fifo not supported
+            }
             // LCR
             3 => {
                 self.lcr.word_len = data & 0x11;

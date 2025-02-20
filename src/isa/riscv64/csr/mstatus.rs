@@ -6,9 +6,9 @@ use bitfield_struct::bitfield;
 #[bitfield(u64)]
 pub struct MStatus {
     _1: bool,
-    SIE: bool, // IRQ: S mode interrupt enable
+    pub SIE: bool, // IRQ: S mode interrupt enable
     _2: bool,
-    MIE: bool, // IRQ: M mode interrupt enable
+    pub MIE: bool, // IRQ: M mode interrupt enable
     _3: bool,
     SPIE: bool, // IRQ: When a trap is taken from privilege mode y into privilege mode x, xPIE is set to the value of xIE; xIE is set to 0; and xPP is set to y.
     UBE: bool,  // ENDIAN: 0

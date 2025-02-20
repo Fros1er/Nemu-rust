@@ -8,6 +8,7 @@ use crate::isa::riscv64::vaddr::{MemOperationSize, VAddr};
 use crate::isa::riscv64::{RISCV64CpuState, RISCV64Privilege};
 use lazy_static::lazy_static;
 use log::info;
+use num::traits::WrappingAdd;
 
 enum InstType {
     R,
@@ -600,7 +601,7 @@ pub static ref PATTERNS: [Pattern;77] = [
     make_pattern(
         "??????? ????? ????? ??? ????? 0010111", U, "auipc",
         |inst, state| {
-            state.regs[inst.rd] = (state.pc.value() + inst.imm) as Reg;
+            state.regs[inst.rd] = state.pc.value().wrapping_add(inst.imm) as Reg;
         },
     ),
     make_pattern(

@@ -56,7 +56,12 @@ impl<T: Isa> Emulator<T> {
         };
         let stopped = Arc::new(AtomicBool::new(false));
         let device = Devices::new(stopped.clone(), &mut memory, args.no_sdl_devices); // init device
-        let mut cpu = T::new(stopped.clone(), memory, &args);
+        let mut cpu = T::new(
+            stopped.clone(),
+            memory,
+            device.cpu_interrupt_bits.clone(),
+            &args,
+        );
         ctrlc::set_handler(move || {
             stopped.store(true, std::sync::atomic::Ordering::Relaxed);
         })
