@@ -1,7 +1,6 @@
 use crate::isa::riscv64::csr::mstatus::MStatus;
 use crate::isa::riscv64::csr::CSRName::{
-    mcause, medeleg, mepc, mideleg, mie, mip, mstatus, mtval, mtvec, scause, sepc, sie, sip,
-    sstatus, stvec,
+    mcause, medeleg, mepc, mideleg, mie, mip, mstatus, mtval, mtvec, scause, sepc, sie, sip, stvec,
 };
 use crate::isa::riscv64::csr::MCauseCode::{MExtInt, MTimerInt, SExtInt, STimerInt};
 use crate::isa::riscv64::csr::{CSRName, CSRs, MCauseCode};
@@ -18,7 +17,6 @@ use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 use crate::monitor::Args;
 use crate::utils::configs::CONFIG_MEM_BASE;
 use crate::utils::disasm::LLVMDisassembler;
-use chumsky::prelude::todo;
 use log::{error, info, warn};
 use std::cell::RefCell;
 use std::fmt::Write;
@@ -66,6 +64,7 @@ pub struct RISCV64CpuState {
     backtrace: Vec<u64>,
     stopping: bool,
     last_interrupt: u64,
+    wfi: bool,
 }
 
 impl Drop for RISCV64CpuState {
@@ -99,6 +98,7 @@ impl RISCV64CpuState {
             backtrace: Vec::new(),
             stopping: false,
             last_interrupt: 0,
+            wfi: false,
         }
     }
     pub(crate) fn handle_interrupt(&mut self, interrupt_bits: u64) {
@@ -176,9 +176,13 @@ impl RISCV64CpuState {
             RISCV64Privilege::M
         };
         info!(
-            "interrupt {:?}, from {:?} to {:?}",
-            cause, prev_priv, next_priv
+            "interrupt {:?} at pc {:#x}, from {:?} to {:?}",
+            cause,
+            self.pc.value(),
+            prev_priv,
+            next_priv
         );
+        self.wfi = false;
         self.trap_update_csrs(cause, prev_priv, next_priv, None);
     }
 
@@ -206,22 +210,22 @@ impl RISCV64CpuState {
             set_csr!(mepc, self.pc.value());
             set_csr!(mcause, cause as u64);
             self.dyn_pc = Some(VAddr::new(self.csrs[mtvec].into()));
-            if let Some(val) = mtval_val {
-                set_csr!(mtval, val);
-            }
         } else {
             set_csr!(sepc, self.pc.value());
             set_csr!(scause, cause as u64);
             self.dyn_pc = Some(VAddr::new(self.csrs[stvec].into()));
-            let cause_name: &'static str = (&cause).into();
-            info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
-            todo!("delegate trap to S mode")
+            // let cause_name: &'static str = (&cause).into();
+            // info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
+            // todo!("delegate trap to S mode")
+        }
+        if let Some(val) = mtval_val {
+            set_csr!(mtval, val);
         }
         self.privilege.replace(next_priv);
     }
 
     fn trap(&mut self, cause: MCauseCode, mtval_val: Option<u64>) {
-        if cause != MCauseCode::ECallM {
+        if cause != MCauseCode::ECallM && cause != MCauseCode::ECallS {
             let cause_name: &'static str = (&cause).into();
             info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
         }
@@ -250,6 +254,13 @@ impl RISCV64CpuState {
         //     self.csrs[medeleg], is_deleg, prev_priv, next_priv
         // );
 
+        if *self.privilege.borrow() == RISCV64Privilege::U {
+            info!(
+                "User trap! medeleg = {:#x}, cause = {:?}, next_priv = {:?}, to stvec {:#x}",
+                self.csrs[medeleg], cause, next_priv, self.csrs[stvec]
+            )
+        }
+
         self.trap_update_csrs(cause, prev_priv, next_priv, mtval_val);
 
         if self.csrs[mtvec] == 0 {
@@ -272,8 +283,14 @@ impl RISCV64CpuState {
         self.dyn_pc = Some(VAddr::new(self.csrs[xepc].into()));
 
         // info!(
-        //     "Ret epc: {:#x}, from {:?} to {:?}",
-        //     self.csrs[xepc], self.privilege, next_priv
+        //     "Ret at {:#x} epc: v({:#x}) p({:#x}), from {:?} to {:?}",
+        //     self.pc.value(),
+        //     self.csrs[xepc],
+        //     self.memory
+        //         .translate(&VAddr::new(self.csrs[xepc]), MemoryAccessType::X)
+        //         .unwrap_or(PAddr::new(0)),
+        //     self.privilege,
+        //     next_priv
         // );
 
         self.privilege.replace(next_priv);
@@ -406,21 +423,26 @@ impl Isa for RISCV64 {
             return false;
         }
 
-        self.state
-            .handle_interrupt(self.cpu_interrupt_bits.load(SeqCst));
-        if let Some(pc) = &self.state.dyn_pc {
-            // TODO: fix dup code
-            if pc.value() == 0 {
-                warn!(
-                    "Jump to address 0. Current pc vaddr: {:#x}",
-                    self.state.pc.value()
-                );
+        while !self.stopped.load(Relaxed) {
+            self.state
+                .handle_interrupt(self.cpu_interrupt_bits.load(SeqCst));
+            if let Some(pc) = &self.state.dyn_pc {
+                // TODO: fix dup code
+                if pc.value() == 0 {
+                    warn!(
+                        "Jump to address 0. Current pc vaddr: {:#x}",
+                        self.state.pc.value()
+                    );
+                }
+                if pc.value() == self.state.pc.value() {
+                    panic!("deadloop at {:#x}", pc.value())
+                }
+                self.state.pc = *pc;
+                self.state.dyn_pc = None;
             }
-            if pc.value() == self.state.pc.value() {
-                panic!("deadloop at {:#x}", pc.value())
+            if !self.state.wfi {
+                break;
             }
-            self.state.pc = *pc;
-            self.state.dyn_pc = None;
         }
 
         true

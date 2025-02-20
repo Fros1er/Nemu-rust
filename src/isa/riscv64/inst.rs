@@ -377,7 +377,7 @@ macro_rules! gen_zaamo {
 }
 
 lazy_static! {
-pub static ref PATTERNS: [Pattern;77] = [
+pub static ref PATTERNS: [Pattern;78] = [
     // memory
     make_pattern("??????? ????? ????? 000 ????? 0000011", I, "lb", gen_load!(Byte)),
     make_pattern("??????? ????? ????? 100 ????? 0000011", I, "lbu", gen_load_u!(Byte)),
@@ -610,7 +610,14 @@ pub static ref PATTERNS: [Pattern;77] = [
     ),
     make_pattern(
         "0000000 00000 00000 000 00000 1110011", I, "ecall",
-        |_inst, state| state.trap(MCauseCode::ECallM, None),
+        |_inst, state| {
+            let privilege = match *state.privilege.borrow() {
+                RISCV64Privilege::M => MCauseCode::ECallM,
+                RISCV64Privilege::S => MCauseCode::ECallS,
+                RISCV64Privilege::U => MCauseCode::ECallU
+            };
+            state.trap(privilege, None)
+        },
     ),
     make_pattern(
         "0001000 00010 00000 000 00000 1110011", I, "sret",
@@ -628,9 +635,16 @@ pub static ref PATTERNS: [Pattern;77] = [
         "??????? ????? ????? 001 ????? 0001111", I, "fence.i",
         |_inst, _state| {}
     ),
-        make_pattern(
+    make_pattern(
         "0001001 ????? ????? 000 00000 1110011", R, "sfence.vma",
         |_inst, _state| {} // TODO: TLB
+    ),
+    make_pattern(
+        "0001000 00101 00000 000 00000 1110011", R, "wfi",
+        |_inst, state| {
+            state.wfi = true;
+            info!("wfi");
+        }
     ),
 ];
 }

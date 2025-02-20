@@ -271,7 +271,7 @@ impl CSRs {
     pub fn and(&mut self, idx: u64, val: u64, rs1_is_x0: bool) -> Option<CSROpResult> {
         let (csr, mask, hook) = self.get_csr_mut(idx, !rs1_is_x0)?;
         let res = *csr;
-        *csr &= val | !*mask;
+        *csr &= (!val) & *mask;
         Some(CSROpResult::new(res, *csr, hook))
     }
 }
@@ -297,6 +297,8 @@ pub enum MCauseCode {
     LoadAccessFault = 5,
     StoreAMOMisaligned = 6,  // Store/AMO address misaligned
     StoreAMOAccessFault = 7, // Support misaligned access for store
+    ECallU = 8,
+    ECallS = 9,
     ECallM = 11,
     InstPageFault = 12,
     LoadPageFault = 13,

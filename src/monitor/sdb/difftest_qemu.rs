@@ -1,6 +1,6 @@
+use crate::utils::cfg_if_feat;
 use cfg_if::cfg_if;
 use log::info;
-use crate::utils::cfg_if_feat;
 
 cfg_if! {
     if #[cfg(feature="difftest")] {
@@ -34,12 +34,13 @@ pub struct DifftestInfo {
 }
 
 impl DifftestContext {
-    pub fn init(_info: DifftestInfo, _binary: &String) -> Self {
+    pub fn init(_info: DifftestInfo, _binary: &String, _image: &String) -> Self {
         cfg_if! {
             if #[cfg(feature="difftest")] {
                 let qemu_proc = Command::new(_info.qemu_bin)
                     .args(["-M", "virt", "-m", "256M", "-nographic", "-s", "-S",
-                        "-bios", _binary.as_str()])
+                        "-bios", _binary.as_str(), "-kernel", _image.as_str()])
+
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .spawn().unwrap();
@@ -57,4 +58,3 @@ impl DifftestContext {
         }
     }
 }
-

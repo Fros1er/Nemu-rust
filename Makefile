@@ -19,7 +19,11 @@ opensbi:
 	cargo run --release --package nemu-rust --bin nemu-rust -- --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./tests/rvtest.bin
 
 sustechos:
-	cargo run --release --package nemu-rust --bin nemu-rust -- --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ~/code/ics2024/SUSTechOS/build/kernel.bin
+	cargo run --release --package nemu-rust --bin nemu-rust -- --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./SUSTechOS/build/kernel.bin
+
+sustechos-batch:
+	cargo run --release --package nemu-rust --bin nemu-rust -- --batch --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./SUSTechOS/build/kernel.bin
+
 
 build_opensbi:
 	dtc -I dts -O dtb -o nemu-rust.dtb nemu-rust.dts

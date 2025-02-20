@@ -127,7 +127,7 @@ impl SV39PTE {
     }
 }
 
-enum TranslationErr {
+pub enum TranslationErr {
     AccessFault,
     PageFault,
 }
@@ -152,7 +152,7 @@ impl MMU {
         VAddr::new(paddr.value())
     }
 
-    fn translate(&self, vaddr: &VAddr, typ: MemoryAccessType) -> Result<PAddr, TranslationErr> {
+    pub fn translate(&self, vaddr: &VAddr, typ: MemoryAccessType) -> Result<PAddr, TranslationErr> {
         if self.translation_ctrl.is_bare
             || (*self.translation_ctrl.privilege.borrow() == RISCV64Privilege::M
                 && !(typ != MemoryAccessType::X && self.translation_ctrl.MPRV))
@@ -181,7 +181,7 @@ impl MMU {
             );
             // info!("pte {} {:#x}", i, pte.0);
             if pte.0 == 0x0 {
-                panic!("PTE IS ZERO")
+                panic!("PTE IS ZERO, vaddr = {:#x}", vaddr)
             }
             if pte.is_invalid() {
                 return Err(PageFault);

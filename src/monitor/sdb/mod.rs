@@ -56,11 +56,11 @@ impl DbgContext {
         }
     }
     fn exec_once_dbg<T: Isa>(&mut self, emulator: &mut Emulator<T>) -> (bool, bool, bool) {
-        cfg_if_feat!("difftest", {
-            if emulator.difftest_ctx.is_some() {
-                emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.step();
-            }
-        });
+        // cfg_if_feat!("difftest", {
+        //     if emulator.difftest_ctx.is_some() {
+        //         emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.step();
+        //     }
+        // });
 
         let pc = emulator.cpu.isa_get_pc();
 
@@ -70,26 +70,26 @@ impl DbgContext {
 
         let mut pause = false;
 
-        cfg_if_feat!("difftest", {
-            if emulator.difftest_ctx.is_some() {
-                let difftest_regs = emulator
-                    .difftest_ctx
-                    .as_mut()
-                    .unwrap()
-                    .gdb_ctx
-                    .read_regs_64();
-                let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
-                if difftest_res.is_err() {
-                    info!("{}", difftest_res.err().unwrap());
-                    return (false, false, false);
-                }
-                info!(
-                    "identical at pc {:#x}, {} inst in total",
-                    emulator.cpu.isa_get_pc(),
-                    self.inst_count
-                );
-            }
-        });
+        // cfg_if_feat!("difftest", {
+        //     if emulator.difftest_ctx.is_some() {
+        //         let difftest_regs = emulator
+        //             .difftest_ctx
+        //             .as_mut()
+        //             .unwrap()
+        //             .gdb_ctx
+        //             .read_regs_64();
+        //         let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
+        //         if difftest_res.is_err() {
+        //             info!("{}", difftest_res.err().unwrap());
+        //             return (false, false, false);
+        //         }
+        //         info!(
+        //             "identical at pc {:#x}, {} inst in total",
+        //             emulator.cpu.isa_get_pc(),
+        //             self.inst_count
+        //         );
+        //     }
+        // });
 
         for (idx, watchpoint) in self.watchpoints.iter_mut() {
             let eval_res = eval_expr(&watchpoint.expr, emulator);
@@ -113,6 +113,36 @@ impl DbgContext {
                 break;
             }
         }
+
+        if pause {
+            cfg_if_feat!("difftest", {
+                if emulator.difftest_ctx.is_some() {
+                    emulator
+                        .difftest_ctx
+                        .as_mut()
+                        .unwrap()
+                        .gdb_ctx
+                        .continue_to_addr(emulator.cpu.isa_get_pc());
+                    let difftest_regs = emulator
+                        .difftest_ctx
+                        .as_mut()
+                        .unwrap()
+                        .gdb_ctx
+                        .read_regs_64();
+                    let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
+                    if difftest_res.is_err() {
+                        info!("{}", difftest_res.err().unwrap());
+                        return (false, false, false);
+                    }
+                    info!(
+                        "identical at pc {:#x}, {} inst in total",
+                        emulator.cpu.isa_get_pc(),
+                        self.inst_count
+                    );
+                }
+            });
+        }
+
         (not_halt, pause, sdl_quit)
     }
 
@@ -131,7 +161,10 @@ impl DbgContext {
 
 impl Drop for DbgContext {
     fn drop(&mut self) {
-        eprintln!("prev_pc: {:#x}\ninst executed: {}", self.prev_pc, self.inst_count)
+        eprintln!(
+            "prev_pc: {:#x}\ninst executed: {}",
+            self.prev_pc, self.inst_count
+        )
     }
 }
 
@@ -220,7 +253,7 @@ pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
                                 Err(err) => info!("{}", err),
                             }
                         }
-                    },
+                    }
                     'd' => {
                         if line.starts_with("disasm") {
                             info!(

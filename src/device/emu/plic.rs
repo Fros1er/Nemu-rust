@@ -2,7 +2,6 @@ use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::PAddr;
 use crate::memory::IOMap;
 use log::info;
-use std::rc::Rc;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 

@@ -33,11 +33,21 @@ impl CLINT {
                 let mtimecmp = mtimecmp_clone.load(SeqCst);
                 let now = glob_timer.lock().unwrap().since_boot_us();
                 if mtimecmp > now {
-                    // info!("mtimecmp({}) > now({})", mtimecmp, now);
+                    info!(
+                        "mtimecmp({}) > now({}), next trigger at {}ms",
+                        mtimecmp,
+                        now,
+                        Duration::from_micros(mtimecmp - now).as_millis()
+                    );
                     cpu_interrupt_bits.fetch_and(!0b10000000, SeqCst);
                     let _ = rx.recv_timeout(Duration::from_micros(mtimecmp - now));
                 } else {
-                    // info!("mtimecmp({}) <= now({})", mtimecmp, now);
+                    info!(
+                        "mtimecmp({}) <= now({}), next trigger at {}ms",
+                        mtimecmp,
+                        now,
+                        Duration::from_micros(now - mtimecmp).as_millis()
+                    );
                     cpu_interrupt_bits.fetch_or(0b10000000, SeqCst);
                     let _ = rx.recv_timeout(Duration::from_micros(now - mtimecmp));
                 }
