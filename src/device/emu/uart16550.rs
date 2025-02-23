@@ -1,15 +1,17 @@
+use crate::device::emu::plic::PLIC;
 use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::PAddr;
 use crate::memory::IOMap;
+use chumsky::chain::Chain;
 use log::info;
 use ringbuf::storage::Heap;
 use ringbuf::traits::*;
 use ringbuf::{CachingCons, CachingProd, HeapRb, SharedRb};
 use std::cell::UnsafeCell;
 use std::process::Command;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -28,14 +30,14 @@ pub struct UART16550 {
     in_rb: UnsafeCell<CachingCons<Arc<SharedRb<Heap<u8>>>>>,
     out_rb: UnsafeCell<CachingProd<Arc<SharedRb<Heap<u8>>>>>,
     out_notify: Arc<tokio::sync::Notify>,
-    pub interrupt_bits: Arc<AtomicU64>,
     lcr: LCR,
     ier: IER,
     mem: [u8; 16],
+    plic: Arc<Mutex<PLIC>>,
 }
 
 impl UART16550 {
-    pub fn new(stopped: Arc<AtomicBool>) -> Self {
+    pub fn new(plic: Arc<Mutex<PLIC>>, stopped: Arc<AtomicBool>) -> Self {
         let (mut in_prod, in_cons) = HeapRb::<u8>::new(256).split();
         let (out_prod, mut out_cons) = HeapRb::<u8>::new(256).split();
 
@@ -44,12 +46,10 @@ impl UART16550 {
 
         let stopped_clone = stopped.clone();
 
-        let interrupt_bits = Arc::new(AtomicU64::new(0));
-        let interrupt_bits_clone = interrupt_bits.clone();
-
         let data_ready_int_en = Arc::new(AtomicBool::new(false));
         let data_ready_int_en_clone = data_ready_int_en.clone();
 
+        let plic_clone = plic.clone();
         let _tokio_thread = thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_io()
@@ -74,7 +74,7 @@ impl UART16550 {
                             now += in_prod.push_slice(&buf[now..n]);
                         }
                         if data_ready_int_en_clone.load(SeqCst) && n > 0 {
-                            interrupt_bits_clone.fetch_or(1, SeqCst);
+                            plic_clone.lock().unwrap().trigger_interrupt(10);
                         }
                     }
                 });
@@ -98,7 +98,7 @@ impl UART16550 {
         });
 
         let _ = Command::new("gnome-terminal")
-            .args(&["--", "bash", "-c", "nc 127.0.0.1 14514"])
+            .args(&["--", "bash", "-c", "stty -icanon && nc 127.0.0.1 14514"])
             .spawn()
             .unwrap()
             .wait();
@@ -107,13 +107,13 @@ impl UART16550 {
             in_rb: UnsafeCell::new(in_cons),
             out_rb: UnsafeCell::new(out_prod),
             out_notify: notify_clone,
-            interrupt_bits,
             lcr: LCR {
                 word_len: 0,
                 dlab_en: false,
             },
             ier: IER { data_ready_int_en },
             mem: [0; 16],
+            plic,
         }
     }
 }
@@ -128,8 +128,13 @@ impl IOMap for UART16550 {
             0 => unsafe {
                 let rb = &mut *self.in_rb.get();
                 let res = rb.try_pop().unwrap_or(0) as u64;
+                info!(
+                    "UART read. INT: {}, RB LEN: {}",
+                    self.ier.data_ready_int_en.load(SeqCst),
+                    rb.len()
+                );
                 if self.ier.data_ready_int_en.load(SeqCst) && rb.is_empty() {
-                    self.interrupt_bits.store(0, Ordering::SeqCst);
+                    self.plic.lock().unwrap().clear_interrupt(10);
                 }
                 res
             },

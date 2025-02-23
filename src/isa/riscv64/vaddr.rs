@@ -29,12 +29,12 @@ pub enum MemOperationSize {
 }
 
 impl MemOperationSize {
-    pub fn read_val(&self, dst: u64) -> u64 {
+    pub fn read_val(&self, src: u64) -> u64 {
         match self {
-            MemOperationSize::Byte => dst as u8 as u64,
-            MemOperationSize::WORD => dst as u16 as u64,
-            MemOperationSize::DWORD => dst as u32 as u64,
-            MemOperationSize::QWORD => dst,
+            MemOperationSize::Byte => src as u8 as u64,
+            MemOperationSize::WORD => src as u16 as u64,
+            MemOperationSize::DWORD => src as u32 as u64,
+            MemOperationSize::QWORD => src,
         }
     }
     pub fn read_sized(&self, dst: *const u8) -> u64 {

@@ -120,12 +120,12 @@ impl CSRs {
                     $ronly
                 );
                 insert_csr_hook!($m_name, |csr, state| {
-                    state.csrs.set_n($s_name, *csr);
+                    state.csrs.set_n($s_name, *csr).unwrap();
                 });
                 insert_csr_hook!($s_name, |csr, state| {
                     let res = state
                         .csrs
-                        .set_n($m_name, csr | state.csrs[$m_name] & !0b10001000100010)
+                        .set_n($m_name, csr | (state.csrs[$m_name] & !$write_mask))
                         .unwrap();
                     res.call_hook(state);
                 });
@@ -143,7 +143,7 @@ impl CSRs {
             RW
         );
         insert_csr_hook!(CSRName::mstatus, |csr, state| {
-            state.csrs.set_n(CSRName::sstatus, *csr);
+            state.csrs.set_n(CSRName::sstatus, *csr).unwrap();
             let mstatus: MStatus = (*csr).into();
             state.memory.update_priv(&mstatus);
         });
@@ -215,19 +215,19 @@ impl CSRs {
         &mut self,
         idx: u64,
         check_ronly: bool,
-    ) -> Option<(&mut Reg, &u64, Option<&WriteHook>)> {
+    ) -> Result<(&mut Reg, &u64, Option<&WriteHook>), ()> {
         self.check_idx(idx);
-        let (csr, info) = self.csrs.get_mut(&(idx))?;
+        let (csr, info) = self.csrs.get_mut(&(idx)).ok_or(())?;
         match info.access_level {
             CSRAccessLevel::TODO => {
                 panic!("CSR not implemented: {:#x}", idx)
             }
             NotSupported => {
-                return None;
+                return Err(());
             }
             ROnly => {
                 if check_ronly {
-                    return None;
+                    return Err(());
                 }
             }
             RW => {}
@@ -237,42 +237,42 @@ impl CSRs {
 
         if idx == CSRName::time as u64 {
             self.time = glob_timer.lock().unwrap().since_boot_us();
-            return Some((&mut self.time, &info.write_mask, hook));
+            return Ok((&mut self.time, &info.write_mask, hook));
         }
 
-        Some((csr, &info.write_mask, hook))
+        Ok((csr, &info.write_mask, hook))
     }
 
     pub fn set_zero_fast(&mut self, idx: CSRName) {
         self.csrs.get_mut(&(idx as u64)).unwrap().0 = 0;
     }
 
-    pub fn set_n(&mut self, idx: CSRName, val: u64) -> Option<CSROpResult> {
+    pub fn set_n(&mut self, idx: CSRName, val: u64) -> Result<CSROpResult, ()> {
         let (csr, mask, hook) = self.get_csr_mut(idx as u64, true)?;
         let res = *csr;
         *csr = val & *mask;
-        Some(CSROpResult::new(res, *csr, hook))
+        Ok(CSROpResult::new(res, *csr, hook))
     }
 
-    pub fn set(&mut self, idx: u64, val: u64, _rs1_is_x0: bool) -> Option<CSROpResult> {
+    pub fn set(&mut self, idx: u64, val: u64, _rs1_is_x0: bool) -> Result<CSROpResult, ()> {
         let (csr, mask, hook) = self.get_csr_mut(idx, true)?;
         let res = *csr;
         *csr = val & *mask;
-        Some(CSROpResult::new(res, *csr, hook))
+        Ok(CSROpResult::new(res, *csr, hook))
     }
 
-    pub fn or(&mut self, idx: u64, val: u64, rs1_is_x0: bool) -> Option<CSROpResult> {
+    pub fn or(&mut self, idx: u64, val: u64, rs1_is_x0: bool) -> Result<CSROpResult, ()> {
         let (csr, mask, hook) = self.get_csr_mut(idx, !rs1_is_x0)?;
         let res = *csr;
         *csr |= val & *mask;
-        Some(CSROpResult::new(res, *csr, hook))
+        Ok(CSROpResult::new(res, *csr, hook))
     }
 
-    pub fn and(&mut self, idx: u64, val: u64, rs1_is_x0: bool) -> Option<CSROpResult> {
+    pub fn and(&mut self, idx: u64, val: u64, rs1_is_x0: bool) -> Result<CSROpResult, ()> {
         let (csr, mask, hook) = self.get_csr_mut(idx, !rs1_is_x0)?;
         let res = *csr;
         *csr &= (!val) & *mask;
-        Some(CSROpResult::new(res, *csr, hook))
+        Ok(CSROpResult::new(res, *csr, hook))
     }
 }
 
@@ -308,6 +308,13 @@ pub enum MCauseCode {
     MTimerInt = 0x8000000000000007,
     SExtInt = 0x8000000000000009,
     MExtInt = 0x800000000000000b,
+}
+
+pub enum InterruptMask {
+    // STimerInt = 1 << 5,
+    MTimerInt = 1 << 7,
+    SExtInt = 1 << 9,
+    MExtInt = 1 << 11,
 }
 
 #[allow(non_camel_case_types)]

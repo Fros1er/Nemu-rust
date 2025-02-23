@@ -31,7 +31,7 @@ use strum_macros::FromRepr;
 use vaddr::MemOperationSize::DWORD;
 use vaddr::VAddr;
 
-mod csr;
+pub mod csr;
 mod ibuf;
 mod inst;
 mod logo;
@@ -108,8 +108,8 @@ impl RISCV64CpuState {
                 self.csrs.set_zero_fast(mip);
                 self.csrs.set_zero_fast(sip);
             } else {
-                self.csrs.set_n(mip, interrupt_bits);
-                self.csrs.set_n(sip, interrupt_bits);
+                self.csrs.set_n(mip, interrupt_bits).unwrap();
+                self.csrs.set_n(sip, interrupt_bits).unwrap();
             }
         }
         if interrupt_bits == 0 {
@@ -176,14 +176,23 @@ impl RISCV64CpuState {
             RISCV64Privilege::M
         };
         info!(
-            "interrupt {:?} at pc {:#x}, from {:?} to {:?}",
+            "interrupt {:?} at pc {:#x}, from {:?} to {:?}, sie {}",
             cause,
             self.pc.value(),
             prev_priv,
-            next_priv
+            next_priv,
+            MStatus::from_bits(self.csrs[mstatus]).SIE()
         );
         self.wfi = false;
         self.trap_update_csrs(cause, prev_priv, next_priv, None);
+        info!(
+            "interrupt {:?} at pc {:#x}, from {:?} to {:?}, sie {}",
+            cause,
+            self.pc.value(),
+            prev_priv,
+            next_priv,
+            MStatus::from_bits(self.csrs[mstatus]).SIE()
+        );
     }
 
     fn trap_update_csrs(
@@ -196,7 +205,7 @@ impl RISCV64CpuState {
         macro_rules! set_csr {
             ($csr:expr, $val:expr) => {
                 let res = self.csrs.set_n($csr, $val);
-                if let Some(res) = res {
+                if let Ok(res) = res {
                     res.call_hook(self)
                 }
             };
@@ -204,7 +213,7 @@ impl RISCV64CpuState {
         // update mstatus
         let mut mstatus_reg: MStatus = self.csrs[mstatus].into();
         mstatus_reg.update_when_trap(prev_priv, next_priv);
-        self.csrs.set_n(mstatus, mstatus_reg.into());
+        set_csr!(mstatus, mstatus_reg.into());
 
         if next_priv == RISCV64Privilege::M {
             set_csr!(mepc, self.pc.value());
@@ -273,7 +282,9 @@ impl RISCV64CpuState {
         // update mstatus
         let mut mstatus_reg: MStatus = self.csrs[mstatus].into();
         let next_priv = mstatus_reg.update_when_ret(ret_inst);
-        self.csrs.set_n(mstatus, mstatus_reg.into());
+        if let Ok(res) = self.csrs.set_n(mstatus, mstatus_reg.into()) {
+            res.call_hook(self)
+        }
 
         let xepc = if *self.privilege.borrow() == RISCV64Privilege::M {
             mepc
