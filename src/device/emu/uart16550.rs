@@ -2,7 +2,6 @@ use crate::device::emu::plic::PLIC;
 use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::PAddr;
 use crate::memory::IOMap;
-use chumsky::chain::Chain;
 use log::info;
 use ringbuf::storage::Heap;
 use ringbuf::traits::*;
@@ -98,7 +97,12 @@ impl UART16550 {
         });
 
         let _ = Command::new("gnome-terminal")
-            .args(&["--", "bash", "-c", "stty -icanon && nc 127.0.0.1 14514"])
+            .args(&[
+                "--",
+                "bash",
+                "-c",
+                "stty -echo -icanon && nc 127.0.0.1 14514",
+            ])
             .spawn()
             .unwrap()
             .wait();
@@ -124,21 +128,27 @@ impl IOMap for UART16550 {
     }
     fn read(&self, offset: usize, len: MemOperationSize) -> u64 {
         assert!(len == MemOperationSize::Byte);
+        let rb = unsafe { &mut *self.in_rb.get() };
         match offset {
-            0 => unsafe {
-                let rb = &mut *self.in_rb.get();
+            0 => {
                 let res = rb.try_pop().unwrap_or(0) as u64;
                 info!(
-                    "UART read. INT: {}, RB LEN: {}",
+                    "UART read. INT: {}, HAS_VALUE: {}",
                     self.ier.data_ready_int_en.load(SeqCst),
-                    rb.len()
+                    !rb.is_empty()
                 );
                 if self.ier.data_ready_int_en.load(SeqCst) && rb.is_empty() {
                     self.plic.lock().unwrap().clear_interrupt(10);
                 }
                 res
-            },
-            5 => 0x20, // lsr
+            }
+            5 => {
+                let mut res = 0x20;
+                if !rb.is_empty() {
+                    res |= 0x1;
+                }
+                res
+            } // lsr
             _ => todo!("uart16550 ofs {}", offset),
         }
     }

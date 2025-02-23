@@ -643,7 +643,7 @@ pub static ref PATTERNS: [Pattern;78] = [
         "0001000 00101 00000 000 00000 1110011", R, "wfi",
         |_inst, state| {
             state.wfi = true;
-            info!("wfi");
+            info!("wfi at pc {:#x}", state.pc.value());
         }
     ),
 ];
