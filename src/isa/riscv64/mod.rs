@@ -1,6 +1,7 @@
 use crate::isa::riscv64::csr::mstatus::MStatus;
 use crate::isa::riscv64::csr::CSRName::{
-    mcause, medeleg, mepc, mideleg, mie, mip, mstatus, mtval, mtvec, scause, sepc, sie, sip, stvec,
+    mcause, medeleg, mepc, mideleg, mie, mip, mstatus, mtval, mtvec, scause, sepc, sie, sip, stval,
+    stvec,
 };
 use crate::isa::riscv64::csr::MCauseCode::{MExtInt, MTimerInt, SExtInt, STimerInt};
 use crate::isa::riscv64::csr::{CSRName, CSRs, MCauseCode};
@@ -31,7 +32,7 @@ use strum_macros::FromRepr;
 use vaddr::MemOperationSize::DWORD;
 use vaddr::VAddr;
 
-mod csr;
+pub mod csr;
 mod ibuf;
 mod inst;
 mod logo;
@@ -49,9 +50,9 @@ pub struct RISCV64 {
 
 #[derive(PartialEq, Copy, Clone, FromRepr, Debug)]
 pub enum RISCV64Privilege {
-    M,
-    S,
-    U,
+    M = 0b11,
+    S = 0b1,
+    U = 0b0,
 }
 
 pub struct RISCV64CpuState {
@@ -108,8 +109,8 @@ impl RISCV64CpuState {
                 self.csrs.set_zero_fast(mip);
                 self.csrs.set_zero_fast(sip);
             } else {
-                self.csrs.set_n(mip, interrupt_bits);
-                self.csrs.set_n(sip, interrupt_bits);
+                self.csrs.set_n(mip, interrupt_bits).unwrap();
+                self.csrs.set_n(sip, interrupt_bits).unwrap();
             }
         }
         if interrupt_bits == 0 {
@@ -176,14 +177,23 @@ impl RISCV64CpuState {
             RISCV64Privilege::M
         };
         info!(
-            "interrupt {:?} at pc {:#x}, from {:?} to {:?}",
+            "interrupt {:?} at pc {:#x}, from {:?} to {:?}, sie {}",
             cause,
             self.pc.value(),
             prev_priv,
-            next_priv
+            next_priv,
+            MStatus::from_bits(self.csrs[mstatus]).SIE()
         );
         self.wfi = false;
         self.trap_update_csrs(cause, prev_priv, next_priv, None);
+        info!(
+            "interrupt {:?} at pc {:#x}, from {:?} to {:?}, sie {}",
+            cause,
+            self.pc.value(),
+            prev_priv,
+            next_priv,
+            MStatus::from_bits(self.csrs[mstatus]).SIE()
+        );
     }
 
     fn trap_update_csrs(
@@ -196,7 +206,7 @@ impl RISCV64CpuState {
         macro_rules! set_csr {
             ($csr:expr, $val:expr) => {
                 let res = self.csrs.set_n($csr, $val);
-                if let Some(res) = res {
+                if let Ok(res) = res {
                     res.call_hook(self)
                 }
             };
@@ -204,23 +214,32 @@ impl RISCV64CpuState {
         // update mstatus
         let mut mstatus_reg: MStatus = self.csrs[mstatus].into();
         mstatus_reg.update_when_trap(prev_priv, next_priv);
-        self.csrs.set_n(mstatus, mstatus_reg.into());
+        set_csr!(mstatus, mstatus_reg.into());
 
         if next_priv == RISCV64Privilege::M {
             set_csr!(mepc, self.pc.value());
             set_csr!(mcause, cause as u64);
             self.dyn_pc = Some(VAddr::new(self.csrs[mtvec].into()));
+            if let Some(val) = mtval_val {
+                set_csr!(mtval, val);
+            }
         } else {
             set_csr!(sepc, self.pc.value());
             set_csr!(scause, cause as u64);
             self.dyn_pc = Some(VAddr::new(self.csrs[stvec].into()));
-            // let cause_name: &'static str = (&cause).into();
-            // info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
-            // todo!("delegate trap to S mode")
+            if let Some(val) = mtval_val {
+                set_csr!(stval, val);
+            }
         }
-        if let Some(val) = mtval_val {
-            set_csr!(mtval, val);
-        }
+
+        // info!(
+        //     "trap_update_csrs by trap/intr at pc {:#x}, cause {:?}({:#x}) from {:?} to {:?}",
+        //     self.pc.value(),
+        //     cause,
+        //     cause as u64,
+        //     prev_priv,
+        //     next_priv
+        // );
         self.privilege.replace(next_priv);
     }
 
@@ -270,12 +289,23 @@ impl RISCV64CpuState {
     }
 
     fn ret(&mut self, ret_inst: RISCV64Privilege) {
+        if ret_inst != *self.privilege.borrow() {
+            self.trap(MCauseCode::IllegalInst, None);
+            return;
+        }
+
         // update mstatus
         let mut mstatus_reg: MStatus = self.csrs[mstatus].into();
         let next_priv = mstatus_reg.update_when_ret(ret_inst);
-        self.csrs.set_n(mstatus, mstatus_reg.into());
+        if let Ok(res) = self.csrs.set_n(mstatus, mstatus_reg.into()) {
+            res.call_hook(self)
+        }
 
-        let xepc = if *self.privilege.borrow() == RISCV64Privilege::M {
+        if ret_inst == RISCV64Privilege::S {
+            assert_ne!(next_priv, RISCV64Privilege::M);
+        }
+
+        let xepc = if ret_inst == RISCV64Privilege::M {
             mepc
         } else {
             sepc

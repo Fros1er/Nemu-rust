@@ -62,10 +62,10 @@ impl<T: Isa> Emulator<T> {
             device.cpu_interrupt_bits.clone(),
             &args,
         );
-        ctrlc::set_handler(move || {
-            stopped.store(true, std::sync::atomic::Ordering::Relaxed);
-        })
-        .unwrap();
+        // ctrlc::set_handler(move || {
+        //     stopped.store(true, std::sync::atomic::Ordering::Relaxed);
+        // })
+        // .unwrap();
 
         let difftest_ctx = if args.difftest {
             Some(DifftestContext::init(

@@ -40,17 +40,13 @@ impl Devices {
         let vga_ctrl = Arc::new(Mutex::new(VGACtrl::new()));
         let keyboard = Arc::new(Mutex::new(Keyboard::new()));
         let serial = Arc::new(Mutex::new(Serial::new()));
-        let uart16550 = Arc::new(Mutex::new(UART16550::new(stopped.clone())));
         let rtc = Arc::new(Mutex::new(RTC::new()));
-        let plic = Arc::new(Mutex::new(PLIC::new()));
+        let plic = Arc::new(Mutex::new(PLIC::new(cpu_interrupt_bits.clone())));
         let clint = Arc::new(Mutex::new(CLINT::new(
             cpu_interrupt_bits.clone(),
             stopped.clone(),
         )));
-
-        plic.lock()
-            .unwrap()
-            .register_interrupt(uart16550.lock().unwrap().interrupt_bits.clone());
+        let uart16550 = Arc::new(Mutex::new(UART16550::new(plic.clone(), stopped.clone())));
 
         memory.add_mmio(VGA_FRAME_BUF_MMIO_START, vga.clone());
         memory.add_mmio(VGA_CTL_MMIO_START, vga_ctrl.clone());

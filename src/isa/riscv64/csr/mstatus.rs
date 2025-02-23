@@ -71,7 +71,7 @@ impl MStatus {
         } else {
             self.set_SIE(self.SPIE());
             self.set_SPIE(true);
-            to = self.MPP();
+            to = self.SPP() as usize;
             self.set_SPP(false); // Priv::U
         }
         let to: RISCV64Privilege = RISCV64Privilege::from_repr(to).unwrap();

@@ -321,11 +321,11 @@ macro_rules! gen_zicsr {
             state.regs[inst.rs1],
             inst.rs1 == RegName::zero as u64,
         ) {
-            Some(res) => {
+            Ok(res) => {
                 res.call_hook(state);
                 state.regs[inst.rd] = res.old
             }
-            None => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
+            Err(()) => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
         }
     };
 }
@@ -333,11 +333,11 @@ macro_rules! gen_zicsr {
 macro_rules! gen_zicsr_i {
     ($op: tt) => {
         |inst, state| match state.csrs.$op(inst.imm, inst.rs1, false) {
-            Some(res) => {
+            Ok(res) => {
                 res.call_hook(state);
                 state.regs[inst.rd] = res.old
             }
-            None => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
+            Err(()) => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
         }
     };
 }
@@ -643,7 +643,7 @@ pub static ref PATTERNS: [Pattern;78] = [
         "0001000 00101 00000 000 00000 1110011", R, "wfi",
         |_inst, state| {
             state.wfi = true;
-            info!("wfi");
+            info!("wfi at pc {:#x}", state.pc.value());
         }
     ),
 ];

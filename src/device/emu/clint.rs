@@ -1,10 +1,12 @@
 use crate::device::glob_timer;
+use crate::isa::riscv64::csr::InterruptMask;
 use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::PAddr;
 use crate::memory::IOMap;
 use log::info;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +34,7 @@ impl CLINT {
             while !stopped.load(Relaxed) {
                 let mtimecmp = mtimecmp_clone.load(SeqCst);
                 let now = glob_timer.lock().unwrap().since_boot_us();
-                if mtimecmp > now {
+                let wait_res = if mtimecmp > now {
                     info!(
                         "mtimecmp({}) > now({}), next trigger at {}ms",
                         mtimecmp,
@@ -40,7 +42,7 @@ impl CLINT {
                         Duration::from_micros(mtimecmp - now).as_millis()
                     );
                     cpu_interrupt_bits.fetch_and(!0b10000000, SeqCst);
-                    let _ = rx.recv_timeout(Duration::from_micros(mtimecmp - now));
+                    rx.recv_timeout(Duration::from_micros(mtimecmp - now))
                 } else {
                     info!(
                         "mtimecmp({}) <= now({}), next trigger at {}ms",
@@ -48,8 +50,13 @@ impl CLINT {
                         now,
                         Duration::from_micros(now - mtimecmp).as_millis()
                     );
-                    cpu_interrupt_bits.fetch_or(0b10000000, SeqCst);
-                    let _ = rx.recv_timeout(Duration::from_micros(now - mtimecmp));
+                    cpu_interrupt_bits.fetch_or(InterruptMask::MTimerInt as u64, SeqCst);
+                    rx.recv_timeout(Duration::from_micros(now - mtimecmp))
+                };
+                if let Err(e) = wait_res {
+                    if e == RecvTimeoutError::Disconnected {
+                        break;
+                    }
                 }
             }
         });
