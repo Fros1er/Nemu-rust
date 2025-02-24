@@ -2,7 +2,7 @@ use crate::device::emu::plic::PLIC;
 use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::PAddr;
 use crate::memory::IOMap;
-use log::info;
+use log::{info, trace};
 use ringbuf::storage::Heap;
 use ringbuf::traits::*;
 use ringbuf::{CachingCons, CachingProd, HeapRb, SharedRb};
@@ -132,7 +132,7 @@ impl IOMap for UART16550 {
         match offset {
             0 => {
                 let res = rb.try_pop().unwrap_or(0) as u64;
-                info!(
+                trace!(
                     "UART read. INT: {}, HAS_VALUE: {}",
                     self.ier.data_ready_int_en.load(SeqCst),
                     !rb.is_empty()

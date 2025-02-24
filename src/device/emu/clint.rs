@@ -3,7 +3,7 @@ use crate::isa::riscv64::csr::InterruptMask;
 use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::PAddr;
 use crate::memory::IOMap;
-use log::info;
+use log::trace;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::mpsc::RecvTimeoutError;
@@ -35,7 +35,7 @@ impl CLINT {
                 let mtimecmp = mtimecmp_clone.load(SeqCst);
                 let now = glob_timer.lock().unwrap().since_boot_us();
                 let wait_res = if mtimecmp > now {
-                    info!(
+                    trace!(
                         "mtimecmp({}) > now({}), next trigger at {}ms",
                         mtimecmp,
                         now,
@@ -44,7 +44,7 @@ impl CLINT {
                     cpu_interrupt_bits.fetch_and(!0b10000000, SeqCst);
                     rx.recv_timeout(Duration::from_micros(mtimecmp - now))
                 } else {
-                    info!(
+                    trace!(
                         "mtimecmp({}) <= now({}), next trigger at {}ms",
                         mtimecmp,
                         now,

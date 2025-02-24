@@ -1,6 +1,7 @@
 
 .PHONY: rv-test
 
+LOG := info
 CROSS_COMPILE = /opt/riscv-gnu-toolchain/install/bin/riscv64-unknown-elf-
 #OBJCOPY = $(CROSS_COMPILE)objcopy
 OBJCOPY = riscv64-unknown-linux-gnu-objcopy
@@ -19,10 +20,10 @@ opensbi:
 	cargo run --release --package nemu-rust --bin nemu-rust -- --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./tests/rvtest.bin
 
 sustechos:
-	cargo run --release --package nemu-rust --bin nemu-rust -- --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./SUSTechOS/build/kernel.bin
+	cargo run --release --package nemu-rust --bin nemu-rust -- --log-level=$(LOG) --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./SUSTechOS/build/kernel.bin
 
 sustechos-batch:
-	cargo run --release --package nemu-rust --bin nemu-rust -- --batch --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./SUSTechOS/build/kernel.bin
+	cargo run --release --package nemu-rust --bin nemu-rust -- --log-level=$(LOG) --batch --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./SUSTechOS/build/kernel.bin
 
 
 build_opensbi:

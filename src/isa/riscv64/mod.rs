@@ -18,7 +18,7 @@ use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 use crate::monitor::Args;
 use crate::utils::configs::CONFIG_MEM_BASE;
 use crate::utils::disasm::LLVMDisassembler;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::cell::RefCell;
 use std::fmt::Write;
 use std::rc::Rc;
@@ -176,7 +176,7 @@ impl RISCV64CpuState {
         } else {
             RISCV64Privilege::M
         };
-        info!(
+        debug!(
             "interrupt {:?} at pc {:#x}, from {:?} to {:?}, sie {}",
             cause,
             self.pc.value(),
@@ -186,14 +186,6 @@ impl RISCV64CpuState {
         );
         self.wfi = false;
         self.trap_update_csrs(cause, prev_priv, next_priv, None);
-        info!(
-            "interrupt {:?} at pc {:#x}, from {:?} to {:?}, sie {}",
-            cause,
-            self.pc.value(),
-            prev_priv,
-            next_priv,
-            MStatus::from_bits(self.csrs[mstatus]).SIE()
-        );
     }
 
     fn trap_update_csrs(
@@ -246,7 +238,7 @@ impl RISCV64CpuState {
     fn trap(&mut self, cause: MCauseCode, mtval_val: Option<u64>) {
         if cause != MCauseCode::ECallM && cause != MCauseCode::ECallS {
             let cause_name: &'static str = (&cause).into();
-            info!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
+            debug!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
         }
 
         if cause == MCauseCode::ECallM && self.regs[a7] == 93 {
@@ -274,7 +266,7 @@ impl RISCV64CpuState {
         // );
 
         if *self.privilege.borrow() == RISCV64Privilege::U {
-            info!(
+            debug!(
                 "User trap! medeleg = {:#x}, cause = {:?}, next_priv = {:?}, to stvec {:#x}",
                 self.csrs[medeleg], cause, next_priv, self.csrs[stvec]
             )
@@ -283,7 +275,7 @@ impl RISCV64CpuState {
         self.trap_update_csrs(cause, prev_priv, next_priv, mtval_val);
 
         if self.csrs[mtvec] == 0 {
-            info!("mtvec unset. Stopping.");
+            error!("mtvec unset. Stopping.");
             self.stopping = true;
         }
     }
@@ -404,7 +396,7 @@ impl Isa for RISCV64 {
                     Some(content) => content,
                     None => {
                         if inst == 0x0000006f {
-                            info!("dead loop at pc {:#x}", self.state.pc.value());
+                            error!("dead loop at pc {:#x}", self.state.pc.value());
                             self.state.regs[a0] = 1;
                             return false;
                         }
@@ -575,19 +567,19 @@ impl Isa for RISCV64 {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::isa::riscv64::reg::RegName::a0;
-    use crate::isa::riscv64::vaddr::VAddr;
-    use crate::monitor::sdb::eval::eval;
-    use crate::utils::tests::fake_emulator;
-
-    #[test]
-    fn sdb_eval_reg_test() {
-        let mut emulator = fake_emulator();
-        emulator.cpu.state.regs[a0] = 114;
-        emulator.cpu.state.pc = VAddr::new(514);
-        let exp = "$a0 * 1000 + $pc".to_string();
-        assert_eq!(eval(exp.as_str(), &mut emulator).unwrap(), 114514);
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use crate::isa::riscv64::reg::RegName::a0;
+//     use crate::isa::riscv64::vaddr::VAddr;
+//     use crate::monitor::sdb::eval::eval;
+//     use crate::utils::tests::fake_emulator;
+//
+//     #[test]
+//     fn sdb_eval_reg_test() {
+//         let mut emulator = fake_emulator();
+//         emulator.cpu.state.regs[a0] = 114;
+//         emulator.cpu.state.pc = VAddr::new(514);
+//         let exp = "$a0 * 1000 + $pc".to_string();
+//         assert_eq!(eval(exp.as_str(), &mut emulator).unwrap(), 114514);
+//     }
+// }

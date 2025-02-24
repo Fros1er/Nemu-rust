@@ -12,7 +12,7 @@ use crate::isa::riscv64::RISCV64Privilege;
 use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
 use bitfield_struct::bitfield;
-use log::info;
+use log::warn;
 use std::cell::RefCell;
 use std::cmp::PartialEq;
 use std::rc::Rc;
@@ -194,13 +194,13 @@ impl MMU {
             i -= 1;
         }
         if res_pte.is_none() {
-            info!("res_pte is none");
+            warn!("res_pte is none");
             return Err(PageFault);
         }
         let res_pte = res_pte.unwrap();
         // info!("res pte {} {:#x}", i, res_pte.0);
         if i > 0 && (res_pte.PPN() & ((1 << (9 * i)) - 1)) != 0 {
-            info!("misaligned super page, ppn {:#x}", res_pte.PPN());
+            warn!("misaligned super page, ppn {:#x}", res_pte.PPN());
             return Err(PageFault); // misaligned super page
         }
 
@@ -212,7 +212,7 @@ impl MMU {
             return Err(AccessFault);
         }
         if !res_pte.check_access_type(typ, self.translation_ctrl.MXR) {
-            info!("check_access_type failed");
+            warn!("check_access_type failed");
             return Err(PageFault);
         }
 

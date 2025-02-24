@@ -2,7 +2,7 @@ pub mod sdb;
 
 use crate::memory::Memory;
 use crate::utils::configs::{CONFIG_FIRMWARE_SIZE, CONFIG_MEM_SIZE};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use log::{info, LevelFilter};
 use simplelog::{Config, SimpleLogger, WriteLogger};
 use std::fs::File;
@@ -38,25 +38,40 @@ pub struct Args {
 
     /// don't stop at hardware breakpoint
     #[arg(long)]
-    pub ignore_isa_breakpoint: bool, // /// run DiffTest with reference REF_SO
-                                     // #[arg(short, long, value_name = "REF_SO")]
-                                     // diff: String,
-                                     //
-                                     // /// run DiffTest with port PORT
-                                     // #[arg(short, long, value_name = "PORT")]
-                                     // port: i32,
+    pub ignore_isa_breakpoint: bool,
+
+    #[arg(long)]
+    pub log_level: LogLevel,
 }
 
-pub fn init_log(log_file: Option<&String>) {
-    match log_file {
+#[derive(ValueEnum, Debug, Default, Copy, Clone)]
+pub enum LogLevel {
+    #[default]
+    Info,
+    Debug,
+    Trace,
+}
+
+impl From<LogLevel> for LevelFilter {
+    fn from(value: LogLevel) -> Self {
+        match value {
+            LogLevel::Info => LevelFilter::Info,
+            LogLevel::Debug => LevelFilter::Debug,
+            LogLevel::Trace => LevelFilter::Trace,
+        }
+    }
+}
+
+pub fn init_log(args: &Args) {
+    match &args.log {
         Some(log_file) => {
             let path = Path::new(log_file);
             match File::create(path) {
-                Ok(file) => WriteLogger::init(LevelFilter::Info, Config::default(), file),
+                Ok(file) => WriteLogger::init(args.log_level.into(), Config::default(), file),
                 Err(why) => panic!("couldn't create {}: {}", path.display(), why),
             }
         }
-        None => SimpleLogger::init(LevelFilter::Info, Config::default()),
+        None => SimpleLogger::init(args.log_level.into(), Config::default()),
     }
     .expect("Failed to create logger.");
 }

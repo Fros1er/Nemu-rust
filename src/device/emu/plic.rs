@@ -2,7 +2,7 @@ use crate::isa::riscv64::csr::InterruptMask;
 use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::PAddr;
 use crate::memory::IOMap;
-use log::info;
+use log::{debug, trace};
 use std::cell::UnsafeCell;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::SeqCst;
@@ -35,7 +35,7 @@ impl PLIC {
         self.device_bits |= 1 << id;
         let trigger_m = self.enable_bits[0] & (1 << id) != 0;
         let trigger_s = self.enable_bits[1] & (1 << id) != 0;
-        info!("Trigger PLIC interrupt, M: {}, S: {}", trigger_m, trigger_s);
+        debug!("Trigger PLIC interrupt, M: {}, S: {}", trigger_m, trigger_s);
         if trigger_m {
             self.cpu_interrupt_bits
                 .fetch_or(InterruptMask::MExtInt as u64, SeqCst);
@@ -52,7 +52,7 @@ impl PLIC {
     }
 
     fn claim_complete(&self, ctx: usize) -> u64 {
-        info!("ctx {} claim/complete", ctx);
+        trace!("plic ctx {} claim/complete", ctx);
         assert!(ctx <= 1);
         let mut en = 0;
         let mut max = 0;
@@ -69,7 +69,7 @@ impl PLIC {
                 }
             }
             if self.device_bits & (1 << en) == 0 {
-                info!("device bit is clear");
+                trace!("device bit is clear");
                 (*self.pending_bits.get())[ctx] &= !(1 << en);
                 if (*self.pending_bits.get())[ctx] == 0 {
                     match ctx {
@@ -85,7 +85,7 @@ impl PLIC {
                     };
                 };
             } else {
-                info!("device bit is not clear");
+                trace!("device bit is not clear");
             }
         }
         en as u64

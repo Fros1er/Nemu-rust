@@ -7,7 +7,7 @@ use crate::isa::riscv64::vaddr::MemOperationSize::{Byte, DWORD, QWORD, WORD};
 use crate::isa::riscv64::vaddr::{MemOperationSize, VAddr};
 use crate::isa::riscv64::{RISCV64CpuState, RISCV64Privilege};
 use lazy_static::lazy_static;
-use log::info;
+use log::debug;
 use num::traits::WrappingAdd;
 
 enum InstType {
@@ -643,7 +643,7 @@ pub static ref PATTERNS: [Pattern;78] = [
         "0001000 00101 00000 000 00000 1110011", R, "wfi",
         |_inst, state| {
             state.wfi = true;
-            info!("wfi at pc {:#x}", state.pc.value());
+            debug!("wfi at pc {:#x}", state.pc.value());
         }
     ),
 ];

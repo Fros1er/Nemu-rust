@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::paddr::PAddr;
 use crate::memory::IOMap;

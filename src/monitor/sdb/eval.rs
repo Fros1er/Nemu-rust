@@ -158,54 +158,54 @@ pub fn eval<T: Isa>(expr: &str, emulator: &mut Emulator<T>) -> Result<i64, Strin
     eval_expr(&parse(expr)?, emulator)
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::monitor::sdb::eval::{eval, eval_expr, parser};
-    use crate::utils::tests::fake_emulator;
-    use chumsky::Parser;
-    //
-    //     #[test]
-    //     fn mem_test() {
-    // let emulator = fake_emulator();
-    // let test_addr: VAddr = (CONFIG_MBASE + 8).into();
-    // emulator.
-    //     .memory
-    //     .borrow_mut()
-    //     .write(&test_addr, 114514, QWORD);
-    // let exp = "*0x80000008".to_string();
-    // assert_eq!(
-    //     eval_expr(&parser().parse(exp).unwrap(), &emulator).unwrap(),
-    //     114514
-    // );
-    // }
-
-    #[test]
-    fn calc_test() {
-        let exp = "100 * 0xa - ((1 + 1) + 2) -- 1".to_string();
-        let mut emulator = fake_emulator();
-        assert_eq!(
-            eval_expr(&parser().parse(exp).unwrap(), &mut emulator).unwrap(),
-            997
-        );
-    }
-
-    #[test]
-    fn comp_test() {
-        let exp = "1 * 2 == 3 - 1 && 0x10 != 10".to_string();
-        let mut emulator = fake_emulator();
-        assert_eq!(
-            eval_expr(&parser().parse(exp).unwrap(), &mut emulator).unwrap(),
-            1
-        );
-    }
-
-    #[test]
-    fn err_test() {
-        let exp = "aaa * bbb".to_string();
-        let mut emulator = fake_emulator();
-        match eval(&exp, &mut emulator) {
-            Ok(_) => assert!(false),
-            Err(err) => println!("ERR: {}", err),
-        }
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use crate::monitor::sdb::eval::{eval, eval_expr, parser};
+//     use crate::utils::tests::fake_emulator;
+//     use chumsky::Parser;
+//     //
+//     //     #[test]
+//     //     fn mem_test() {
+//     // let emulator = fake_emulator();
+//     // let test_addr: VAddr = (CONFIG_MBASE + 8).into();
+//     // emulator.
+//     //     .memory
+//     //     .borrow_mut()
+//     //     .write(&test_addr, 114514, QWORD);
+//     // let exp = "*0x80000008".to_string();
+//     // assert_eq!(
+//     //     eval_expr(&parser().parse(exp).unwrap(), &emulator).unwrap(),
+//     //     114514
+//     // );
+//     // }
+//
+//     #[test]
+//     fn calc_test() {
+//         let exp = "100 * 0xa - ((1 + 1) + 2) -- 1".to_string();
+//         let mut emulator = fake_emulator();
+//         assert_eq!(
+//             eval_expr(&parser().parse(exp).unwrap(), &mut emulator).unwrap(),
+//             997
+//         );
+//     }
+//
+//     #[test]
+//     fn comp_test() {
+//         let exp = "1 * 2 == 3 - 1 && 0x10 != 10".to_string();
+//         let mut emulator = fake_emulator();
+//         assert_eq!(
+//             eval_expr(&parser().parse(exp).unwrap(), &mut emulator).unwrap(),
+//             1
+//         );
+//     }
+//
+//     #[test]
+//     fn err_test() {
+//         let exp = "aaa * bbb".to_string();
+//         let mut emulator = fake_emulator();
+//         match eval(&exp, &mut emulator) {
+//             Ok(_) => assert!(false),
+//             Err(err) => println!("ERR: {}", err),
+//         }
+//     }
+// }

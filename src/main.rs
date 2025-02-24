@@ -32,7 +32,7 @@ pub struct Emulator<T: Isa> {
 impl<T: Isa> Emulator<T> {
     pub fn new() -> Self {
         let args = crate::monitor::Args::parse();
-        init_log(args.log.as_ref());
+        init_log(&args);
 
         let mut memory = Memory::new(); // init mem
         let _img_size = monitor::load_img(&args.image, &mut memory);

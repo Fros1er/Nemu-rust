@@ -4,7 +4,7 @@ use crate::utils::configs::{
     CONFIG_FIRMWARE_BASE, CONFIG_FIRMWARE_SIZE, CONFIG_MEM_BASE, CONFIG_MEM_SIZE,
 };
 use lazy_static::lazy_static;
-use log::info;
+use log::{info, warn};
 use std::fmt::{Display, Formatter, LowerHex};
 use std::ops::{Add, Sub};
 
@@ -86,7 +86,7 @@ impl Memory {
         if let Some(ptr) = self.get_mem_ptr(paddr) {
             return Some(len.read_sized(ptr));
         }
-        info!("MEM READ ERR: {:#x}", paddr.0);
+        warn!("MEM READ ERR: {:#x}", paddr.0);
         None
     }
 
@@ -103,7 +103,7 @@ impl Memory {
                     .read(iomap.paddr_to_device_mem_idx(paddr), len),
             );
         }
-        info!("MEM & IO READ ERR: {:#x}", paddr.0);
+        warn!("MEM & IO READ ERR: {:#x}", paddr.0);
         None
     }
 
@@ -123,7 +123,7 @@ impl Memory {
                 Ok(())
             }
             None => {
-                info!("MEM WRITE ERR: {:#x}", paddr.0);
+                warn!("MEM WRITE ERR: {:#x}", paddr.0);
                 Err(())
             }
         }
