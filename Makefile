@@ -1,5 +1,5 @@
 
-.PHONY: rv-test
+.PHONY: rv-test build_linux linux
 
 LOG := info
 CROSS_COMPILE = /opt/riscv-gnu-toolchain/install/bin/riscv64-unknown-elf-
@@ -19,11 +19,19 @@ rv-test-diff: binary
 opensbi:
 	cargo run --release --package nemu-rust --bin nemu-rust -- --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./tests/rvtest.bin
 
+build_linux:
+	$(MAKE) -C linux/linux ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- -j14
+	$(MAKE) -C opensbi-1.6 clean
+	$(MAKE) -C opensbi-1.6 CROSS_COMPILE=riscv64-unknown-linux-gnu- PLATFORM=generic PLATFORM_RISCV_ISA=rv64ima_zicsr_zifencei FW_TEXT_START=0x80000000 FW_PAYLOAD_PATH=$(CURDIR)/linux/linux/arch/riscv/boot/Image FW_FDT_PATH=$(CURDIR)/nemu-rust.dtb FW_PAYLOAD_FDT_ADDR=0x9ff00000 -j14	
+
+linux:
+	cargo run --release --package nemu-rust --bin nemu-rust -- --log-level=$(LOG) --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_payload.bin
+
 sustechos:
 	cargo run --release --package nemu-rust --bin nemu-rust -- --log-level=$(LOG) --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./SUSTechOS/build/kernel.bin
 
 sustechos-batch:
-	cargo run --release --package nemu-rust --bin nemu-rust -- --log-level=$(LOG) --batch --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./SUSTechOS/build/kernel.bin
+	cargo run --release --package nemu-rust --bin nemu-rust -- --log-level=$(LOG) --batch --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin --image ./SUSTechOS/build/kernel.bin
 
 
 build_opensbi:

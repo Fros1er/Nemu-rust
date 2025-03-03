@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use crate::isa::riscv64::vaddr::MemOperationSize;
-use crate::memory::paddr::{init_mem, PAddr, FIRMWARE_LEFT, FIRMWARE_RIGHT, PMEM_LEFT, PMEM_RIGHT};
-use crate::utils::configs::{CONFIG_FIRMWARE_SIZE, CONFIG_MEM_SIZE};
+use crate::memory::paddr::{init_mem, PAddr, PMEM_LEFT, PMEM_RIGHT};
+use crate::utils::configs::CONFIG_MEM_SIZE;
 
 pub mod paddr;
 
@@ -47,7 +47,6 @@ impl IOMapEntry {
 }
 
 pub struct Memory {
-    pub firmware: Box<[u8]>,
     pub pmem: Box<[u8]>,
     mmio: Vec<IOMapEntry>,
 }
@@ -56,14 +55,9 @@ impl Memory {
     pub fn new() -> Self {
         init_mem();
         Self {
-            firmware: vec![0u8; CONFIG_FIRMWARE_SIZE as usize].into_boxed_slice(),
-            pmem: vec![0u8; CONFIG_MEM_SIZE as usize].into_boxed_slice(),
+            pmem: vec![0u8; CONFIG_MEM_SIZE].into_boxed_slice(),
             mmio: vec![],
         }
-    }
-
-    pub fn in_firmware(paddr: &PAddr) -> bool {
-        FIRMWARE_LEFT <= *paddr && *paddr <= *FIRMWARE_RIGHT
     }
 
     pub fn in_pmem(paddr: &PAddr) -> bool {

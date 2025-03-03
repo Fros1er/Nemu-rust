@@ -8,9 +8,8 @@ use crate::monitor::sdb::{exec_once, sdb_loop};
 use crate::utils::cfg_if_feat;
 use cfg_if::cfg_if;
 use clap::Parser;
-use log::{info, warn};
+use log::info;
 use std::process::ExitCode;
-use std::ptr::addr_of_mut;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -35,25 +34,12 @@ impl<T: Isa> Emulator<T> {
         init_log(&args);
 
         let mut memory = Memory::new(); // init mem
-        let _img_size = monitor::load_img(&args.image, &mut memory);
-        let _firm_size = if let Some(path) = &args.firmware {
-            monitor::load_firmware(path, &mut memory)
-        } else {
-            // if CONFIG_MEM_BASE.value() != 0x80000000 {
-            //     panic!("TODO: MANUALLY CRAFTED RISCV ASM FOR DEFAULT FIRMWARE");
-            // }
-            warn!("TODO: MANUALLY CRAFTED RISCV ASM FOR DEFAULT FIRMWARE");
-            let firm = [
-                0x0810029bu32, // addw	t0,zero,1 (li 0x81000000)
-                0x01f29293,    // sll	t0,t0,0x1f
-                0x00028067,    // jr	t0
-            ];
-            let dst = addr_of_mut!(memory.firmware[0]) as *mut u32;
-            unsafe {
-                std::ptr::copy_nonoverlapping(firm.as_ptr(), dst, firm.len());
-            }
-            firm.len() * 4
-        };
+        if let Some(path) = &args.image {
+            monitor::load_img(path, &mut memory);
+        }
+        let firm_size = monitor::load_firmware(&args.firmware, args.image.is_some(), &mut memory);
+        info!("Firmware size: {:#x}", firm_size);
+
         let stopped = Arc::new(AtomicBool::new(false));
         let device = Devices::new(stopped.clone(), &mut memory, args.no_sdl_devices); // init device
         let mut cpu = T::new(
@@ -62,16 +48,12 @@ impl<T: Isa> Emulator<T> {
             device.cpu_interrupt_bits.clone(),
             &args,
         );
-        // ctrlc::set_handler(move || {
-        //     stopped.store(true, std::sync::atomic::Ordering::Relaxed);
-        // })
-        // .unwrap();
 
         let difftest_ctx = if args.difftest {
             Some(DifftestContext::init(
                 cpu.isa_difftest_init(),
-                &args.firmware.unwrap(),
-                &args.image,
+                &args.firmware,
+                &args.image.unwrap(),
             ))
         } else {
             None

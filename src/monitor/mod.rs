@@ -1,10 +1,10 @@
 pub mod sdb;
 
 use crate::memory::Memory;
-use crate::utils::configs::{CONFIG_FIRMWARE_SIZE, CONFIG_MEM_SIZE};
+use crate::utils::configs::{CONFIG_IMAGE_BASE, CONFIG_MEM_SIZE};
 use clap::{Parser, ValueEnum};
 use log::{info, LevelFilter};
-use simplelog::{Config, SimpleLogger, WriteLogger};
+use simplelog::{SimpleLogger, WriteLogger};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -14,11 +14,12 @@ use std::path::Path;
 #[derive(Default)]
 pub struct Args {
     /// IMAGE
-    pub(crate) image: String,
+    #[arg(long)]
+    pub(crate) image: Option<String>,
 
     /// Firmware
     #[arg(long)]
-    pub(crate) firmware: Option<String>,
+    pub(crate) firmware: String,
 
     /// run without SDL devices
     #[arg(short, long)]
@@ -63,27 +64,29 @@ impl From<LogLevel> for LevelFilter {
 }
 
 pub fn init_log(args: &Args) {
+    let cfg = simplelog::ConfigBuilder::default()
+        .add_filter_ignore_str("rustyline")
+        .build();
     match &args.log {
         Some(log_file) => {
             let path = Path::new(log_file);
             match File::create(path) {
-                Ok(file) => WriteLogger::init(args.log_level.into(), Config::default(), file),
+                Ok(file) => WriteLogger::init(args.log_level.into(), cfg, file),
                 Err(why) => panic!("couldn't create {}: {}", path.display(), why),
             }
         }
-        None => SimpleLogger::init(args.log_level.into(), Config::default()),
+        None => SimpleLogger::init(args.log_level.into(), cfg),
     }
     .expect("Failed to create logger.");
 }
 
-pub(crate) fn load_firmware(img_file: &String, memory: &mut Memory) -> usize {
-    let path = Path::new(img_file);
+pub(crate) fn load_firmware(firm_file: &String, has_img: bool, memory: &mut Memory) -> usize {
+    let path = Path::new(firm_file);
     let mut f = File::open(path).unwrap();
     let size = f.metadata().unwrap().len();
-    if size > CONFIG_FIRMWARE_SIZE {
+    if (has_img && size > CONFIG_IMAGE_BASE as u64) || size > CONFIG_MEM_SIZE as u64 {
         panic!("Firm too large ({} or {:#x} bytes).", size, size);
     }
-    // f.read(&mut memory.firmware).unwrap()
     f.read(&mut memory.pmem).unwrap()
 }
 
@@ -92,19 +95,8 @@ pub(crate) fn load_img(img_file: &String, memory: &mut Memory) -> usize {
     let path = Path::new(img_file);
     let mut f = File::open(path).unwrap();
     let size = f.metadata().unwrap().len();
-    if size > CONFIG_MEM_SIZE - 0x200000 {
+    if size > (CONFIG_MEM_SIZE - CONFIG_IMAGE_BASE) as u64 {
         panic!("Image too large ({} or {:#x} bytes).", size, size);
     }
-    f.read(&mut memory.pmem[0x200000..]).unwrap()
+    f.read(&mut memory.pmem[CONFIG_IMAGE_BASE..]).unwrap()
 }
-
-// pub fn init_monitor<U: CPUState, T: Isa<U>>() -> T {
-//     let args = Args::parse();
-//     init_log(args.log.as_ref());
-//     init_mem();
-//     init_device();
-//     let mut isa = T::new();
-//     isa.init_isa();
-//     let img_size = load_img(args.image.as_ref());
-//     isa
-// }

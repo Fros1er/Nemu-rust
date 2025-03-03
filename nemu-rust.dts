@@ -61,8 +61,10 @@
 			compatible = "fixed-clock";
 		};
 		L100: uart@10000000 {
+		    device_type = "serial";
 		    compatible = "ns16550";
 		    reg = <0x10000000 0x100>;
+            clock-frequency = <0>;
             interrupt-parent = <&L5>;
             interrupts = <10>;
 		};

@@ -12,7 +12,7 @@ use crate::isa::riscv64::RISCV64Privilege;
 use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
 use bitfield_struct::bitfield;
-use log::warn;
+use log::{info, warn};
 use std::cell::RefCell;
 use std::cmp::PartialEq;
 use std::rc::Rc;
@@ -152,6 +152,38 @@ impl MMU {
         VAddr::new(paddr.value())
     }
 
+    fn pt_walk_debug(&self, vaddr: u64) {
+        info!("pt_walk_debug begin");
+        let vpn = [
+            (vaddr >> 12) & 0b111111111,
+            (vaddr >> 21) & 0b111111111,
+            (vaddr >> 30) & 0b111111111,
+        ];
+        let mut a = self.translation_ctrl.sv39.lvl1_base;
+        let mut i = 2;
+        for _ in 0..3 {
+            let lvl = i;
+            info!("try get pte {} at {:#x}", i, a + vpn[lvl] * 8);
+            let pte = SV39PTE::from(
+                self.mem
+                    .read_mem(&PAddr::new(a + vpn[lvl] * 8), MemOperationSize::DWORD)
+                    .unwrap(),
+            );
+            info!("pte {} {:#x}", i, pte.0);
+            if pte.0 == 0x0 {
+                return;
+            }
+            if pte.is_invalid() {
+                return;
+            }
+            if !pte.is_next_lvl_ptr() {
+                return;
+            }
+            a = pte.PPN() << 12;
+            i -= 1;
+        }
+    }
+
     pub fn translate(&self, vaddr: &VAddr, typ: MemoryAccessType) -> Result<PAddr, TranslationErr> {
         if self.translation_ctrl.is_bare
             || (*self.translation_ctrl.privilege.borrow() == RISCV64Privilege::M
@@ -181,7 +213,9 @@ impl MMU {
             );
             // info!("pte {} {:#x}", i, pte.0);
             if pte.0 == 0x0 {
-                panic!("PTE IS ZERO, vaddr = {:#x}", vaddr)
+                self.pt_walk_debug(vaddr);
+                warn!("PTE IS ZERO, vaddr = {:#x}", vaddr)
+                // return Err(PageFault);
             }
             if pte.is_invalid() {
                 return Err(PageFault);

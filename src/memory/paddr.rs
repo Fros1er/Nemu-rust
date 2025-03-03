@@ -1,8 +1,6 @@
 use crate::isa::riscv64::vaddr::MemOperationSize;
 use crate::memory::Memory;
-use crate::utils::configs::{
-    CONFIG_FIRMWARE_BASE, CONFIG_FIRMWARE_SIZE, CONFIG_MEM_BASE, CONFIG_MEM_SIZE,
-};
+use crate::utils::configs::{CONFIG_MEM_BASE, CONFIG_MEM_SIZE};
 use lazy_static::lazy_static;
 use log::{info, warn};
 use std::fmt::{Display, Formatter, LowerHex};
@@ -18,9 +16,6 @@ impl PAddr {
     }
     pub fn to_host_mem_arr_index(&self) -> usize {
         (self.0 - CONFIG_MEM_BASE.0) as usize
-    }
-    pub fn to_host_firmware_arr_index(&self) -> usize {
-        (self.0 - CONFIG_FIRMWARE_BASE.0) as usize
     }
     pub fn value(&self) -> u64 {
         self.0
@@ -54,10 +49,8 @@ impl LowerHex for PAddr {
 }
 
 pub const PMEM_LEFT: PAddr = CONFIG_MEM_BASE;
-pub const FIRMWARE_LEFT: PAddr = CONFIG_FIRMWARE_BASE;
 lazy_static! {
-    pub static ref PMEM_RIGHT: PAddr = PMEM_LEFT + CONFIG_MEM_SIZE - 1;
-    pub static ref FIRMWARE_RIGHT: PAddr = FIRMWARE_LEFT + CONFIG_FIRMWARE_SIZE - 1;
+    pub static ref PMEM_RIGHT: PAddr = PMEM_LEFT + CONFIG_MEM_SIZE as u64 - 1;
 }
 
 impl Memory {

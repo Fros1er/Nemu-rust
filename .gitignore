@@ -1,6 +1,8 @@
-riscv_tests
-uCore-VisionFive2
-opensbi-1.6
+riscv_tests/
+uCore-VisionFive2/
+opensbi-1.6/
+SUSTechOS/
+linux/
 
 *.dtb
 
