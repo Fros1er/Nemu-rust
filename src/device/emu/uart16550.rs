@@ -36,7 +36,11 @@ pub struct UART16550 {
 }
 
 impl UART16550 {
-    pub fn new(plic: Arc<Mutex<PLIC>>, stopped: Arc<AtomicBool>) -> Self {
+    pub fn new(
+        plic: Arc<Mutex<PLIC>>,
+        stopped: Arc<AtomicBool>,
+        term_close_timeout: Option<u64>,
+    ) -> Self {
         let (mut in_prod, in_cons) = HeapRb::<u8>::new(256).split();
         let (out_prod, mut out_cons) = HeapRb::<u8>::new(256).split();
 
@@ -48,64 +52,72 @@ impl UART16550 {
         let data_ready_int_en = Arc::new(AtomicBool::new(false));
         let data_ready_int_en_clone = data_ready_int_en.clone();
 
-        let plic_clone = plic.clone();
-        let _tokio_thread = thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_io()
-                .build()
-                .unwrap();
-            runtime.block_on(async move {
-                let listener = tokio::net::TcpListener::bind("127.0.0.1:14514")
-                    .await
+        if term_close_timeout.is_some() && term_close_timeout.unwrap() == 0 {
+            info!("UART Server won't start due to term_timeout is 0");
+        } else {
+            let plic_clone = plic.clone();
+            let _tokio_thread = thread::spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
+                    .build()
                     .unwrap();
-                info!("UART Server started at 127.0.0.1:14514");
-                let (socket, _) = listener.accept().await.unwrap();
-                let (mut reader, mut writer) = tokio::io::split(socket);
-                info!("Client connected");
-
-                // Reader
-                let reader = tokio::task::spawn(async move {
-                    let mut buf = [0u8; 256];
-                    while !stopped_clone.load(Relaxed) {
-                        let n = reader.read(&mut buf).await.unwrap();
-                        let mut now = 0;
-                        while now < n {
-                            now += in_prod.push_slice(&buf[now..n]);
-                        }
-                        if data_ready_int_en_clone.load(SeqCst) && n > 0 {
-                            plic_clone.lock().unwrap().trigger_interrupt(10);
-                        }
-                    }
-                });
-
-                // Writer
-                let writer = tokio::spawn(async move {
-                    writer
-                        .write_all("Nemu Rust UART\n".as_bytes())
+                runtime.block_on(async move {
+                    let listener = tokio::net::TcpListener::bind("127.0.0.1:14514")
                         .await
                         .unwrap();
-                    let mut buf = [0u8; 256];
-                    while !stopped.load(Relaxed) {
-                        notify.notified().await;
-                        let n = out_cons.pop_slice(&mut buf);
-                        writer.write_all(&buf[..n]).await.unwrap();
-                    }
+                    info!("UART Server started at 127.0.0.1:14514");
+                    let (socket, _) = listener.accept().await.unwrap();
+                    let (mut reader, mut writer) = tokio::io::split(socket);
+                    info!("Client connected");
+
+                    // Reader
+                    let reader = tokio::task::spawn(async move {
+                        let mut buf = [0u8; 256];
+                        while !stopped_clone.load(Relaxed) {
+                            let n = reader.read(&mut buf).await.unwrap();
+                            let mut now = 0;
+                            while now < n {
+                                now += in_prod.push_slice(&buf[now..n]);
+                            }
+                            if data_ready_int_en_clone.load(SeqCst) && n > 0 {
+                                plic_clone.lock().unwrap().trigger_interrupt(10);
+                            }
+                        }
+                    });
+
+                    // Writer
+                    let writer = tokio::spawn(async move {
+                        writer
+                            .write_all("Nemu Rust UART\n".as_bytes())
+                            .await
+                            .unwrap();
+                        let mut buf = [0u8; 256];
+                        while !stopped.load(Relaxed) {
+                            notify.notified().await;
+                            let n = out_cons.pop_slice(&mut buf);
+                            writer.write_all(&buf[..n]).await.unwrap();
+                        }
+                    });
+
+                    let _ = tokio::join!(reader, writer);
                 });
-
-                let _ = tokio::join!(reader, writer);
             });
-        });
 
-        let _ = Command::new("gnome-terminal")
-            .args(&[
-                "--",
-                "bash",
-                "-c",
-                "stty -echo -icanon && nc 127.0.0.1 14514",
-            ])
-            .spawn()
-            .unwrap()
-            .wait();
+            let timeout_str = match term_close_timeout {
+                Some(timeout) => format!("-w {}", timeout),
+                None => "".to_string(),
+            };
+            let _ = Command::new("gnome-terminal")
+                .args(&[
+                    "--",
+                    "bash",
+                    "-c",
+                    format!("stty -echo -icanon && nc {} 127.0.0.1 14514", timeout_str).as_str(),
+                ])
+                .spawn()
+                .unwrap()
+                .wait();
+        }
 
         Self {
             in_rb: UnsafeCell::new(in_cons),

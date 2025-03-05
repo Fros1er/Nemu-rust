@@ -42,6 +42,9 @@ pub struct MStatus {
 }
 
 impl MStatus {
+    pub fn MPP_is_m_mode(&self) -> bool {
+        self.MPP() == RISCV64Privilege::M as usize
+    }
     // IRQ: When a trap is taken from privilege mode y into privilege mode x,
     // xPIE is set to the value of xIE; xIE is set to 0; and xPP is set to y.
     pub fn update_when_trap(&mut self, from: RISCV64Privilege, to: RISCV64Privilege) {
@@ -108,7 +111,7 @@ mod tests {
         println!("{:#x}", 0b10u64 << 62 | 0b101000001000100101001);
         let tt: MStatus = MStatus::create();
         println!("{:?}", tt);
-        let t = MStatus::new().with_SIE(true);
-        println!("{:#x}", t.0);
+        let t = MStatus::from_bits(0xa00000000);
+        println!("{:?}", t);
     }
 }

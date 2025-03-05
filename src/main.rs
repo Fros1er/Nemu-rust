@@ -41,7 +41,7 @@ impl<T: Isa> Emulator<T> {
         info!("Firmware size: {:#x}", firm_size);
 
         let stopped = Arc::new(AtomicBool::new(false));
-        let device = Devices::new(stopped.clone(), &mut memory, args.no_sdl_devices); // init device
+        let device = Devices::new(stopped.clone(), &mut memory, &args); // init device
         let mut cpu = T::new(
             stopped.clone(),
             memory,

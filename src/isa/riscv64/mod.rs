@@ -19,7 +19,7 @@ use crate::monitor::Args;
 use crate::utils::configs::CONFIG_MEM_BASE;
 use crate::utils::disasm::LLVMDisassembler;
 use log::{debug, error, info, warn};
-use std::cell::RefCell;
+use std::cell::{RefCell, UnsafeCell};
 use std::fmt::Write;
 use std::rc::Rc;
 use std::str::FromStr;
@@ -66,6 +66,7 @@ pub struct RISCV64CpuState {
     stopping: bool,
     last_interrupt: u64,
     wfi: bool,
+    cycles: Rc<UnsafeCell<u64>>,
 }
 
 impl Drop for RISCV64CpuState {
@@ -88,10 +89,10 @@ impl RISCV64CpuState {
     fn new(memory: Memory, reset_vector: &PAddr) -> Self {
         let privilege = Rc::new(RefCell::new(RISCV64Privilege::M));
         let mmu = MMU::new(memory, privilege.clone());
-
+        let cycles = Rc::new(UnsafeCell::new(0));
         Self {
             regs: Registers::new(),
-            csrs: CSRs::new(),
+            csrs: CSRs::new(cycles.clone()),
             pc: mmu.paddr_to_vaddr(reset_vector),
             dyn_pc: None,
             memory: mmu,
@@ -100,6 +101,7 @@ impl RISCV64CpuState {
             stopping: false,
             last_interrupt: 0,
             wfi: false,
+            cycles,
         }
     }
     pub(crate) fn handle_interrupt(&mut self, interrupt_bits: u64) {
@@ -241,14 +243,19 @@ impl RISCV64CpuState {
             debug!("trap at {:#x}, caused by {}", self.pc.value(), cause_name);
         }
 
-        if cause == MCauseCode::ECallM && self.regs[a7] == 93 {
+        if (cause == MCauseCode::ECallM
+            || cause == MCauseCode::ECallS
+            || cause == MCauseCode::ECallU)
+            && self.regs[a7] == 93
+        {
             info!("riscv-test passfail triggered");
             if self.regs[a0] == 0 {
                 info!("test passed!");
             } else {
-                info!("test case {} failed", self.regs[a0]);
+                error!("test case {} failed", self.regs[a0] >> 1);
             }
             self.stopping = true;
+            return;
         }
 
         let is_deleg = *self.privilege.borrow() != RISCV64Privilege::M
@@ -358,6 +365,7 @@ impl Isa for RISCV64 {
             info!("{:?}: {:#x}", reg, self.state.regs[reg.clone()]);
         }
         info!("pc: {:#x}", self.state.pc.value());
+        info!("priv: {:?}", *self.state.privilege.borrow());
         for reg in CSRName::iter() {
             info!("{:?}: {:#x}", reg, self.state.csrs[reg]);
         }
@@ -392,6 +400,12 @@ impl Isa for RISCV64 {
                 self.state.trap(err, Some(self.state.pc.value()));
             }
             Ok((inst, pc_paddr)) => {
+                if inst == 0xff1ff06f && pc_paddr.value() == 0x80000050 {
+                    // riscv-test fail
+                    error!("riscv-test write-to-host triggered");
+                    return false;
+                }
+
                 let (pattern, decode) = match self.ibuf.get(&pc_paddr, inst) {
                     Some(content) => content,
                     None => {
@@ -464,6 +478,9 @@ impl Isa for RISCV64 {
             }
             if !self.state.wfi {
                 break;
+            }
+            unsafe {
+                *self.state.cycles.get() += 1;
             }
         }
 

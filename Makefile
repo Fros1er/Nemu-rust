@@ -1,20 +1,41 @@
 
-.PHONY: rv-test build_linux linux
+.PHONY: build-rv-test rv-test rv-test-one build_linux linux 
 
 LOG := info
-CROSS_COMPILE = /opt/riscv-gnu-toolchain/install/bin/riscv64-unknown-elf-
-#OBJCOPY = $(CROSS_COMPILE)objcopy
 OBJCOPY = riscv64-unknown-linux-gnu-objcopy
-#RV_TEST_ROOT = /home/froster/code/ics2024/riscv-tests
-RV_TEST_ROOT = /home/froster/code/Nemu-rust/riscv-tests/install/share/riscv-tests
-TEST = $(RV_TEST_ROOT)/isa/rv64mi-p-access
-#TEST = $(RV_TEST_ROOT)/isa/rv64mi-p-csr
+RV_TEST_ROOT = ./riscv-tests/install/share/riscv-tests/isa
 
-binary:
-	$(OBJCOPY) -S --set-section-flags .bss=alloc,contents -O binary $(TEST) ./tests/rvtest.bin
+# 查找 TEST_DIR 下所有以 rv64- 开头的文件
+RV_TEST_BINS := $(patsubst $(RV_TEST_ROOT)/%,$(RV_TEST_ROOT)/binary/%.bin,$(filter-out %.dump,$(wildcard $(RV_TEST_ROOT)/rv64*)))
 
-rv-test-diff: binary
-	cargo run --release --package nemu-rust --bin nemu-rust -- --difftest ./tests/rvtest.bin
+# 仅匹配 rv64- 开头的文件
+$(RV_TEST_ROOT)/binary/rv64%.bin: $(filter-out $(RV_TEST_ROOT)/rv64%.dump,$(RV_TEST_ROOT)/rv64%)
+	$(OBJCOPY) -S --set-section-flags .bss=alloc,contents -O binary $< $@
+
+# 目标规则
+build-rv-test: $(RV_TEST_BINS)
+
+EXCLUDED_BINS := rv64mi-p-illegal.bin rv64mi-p-breakpoint.bin rv64mi-p-ma_fetch.bin \
+	rv64mi-p-zicntr.bin rv64si-p-ma_fetch.bin rv64si-p-wfi.bin
+
+RV_TEST_BINS_FINAL := $(filter-out $(addprefix $(RV_TEST_ROOT)/binary/, $(EXCLUDED_BINS)), $(RV_TEST_BINS))
+
+rv-test: $(RV_TEST_BINS)
+	@for bin in $(RV_TEST_BINS_FINAL); do \
+  		FILENAME=$$(basename $$bin); \
+		cargo run --release --package nemu-rust --bin nemu-rust -- \
+			--batch --log-level=warn --term-timeout=0 --firmware $$bin || exit 1; \
+		echo "\033[32mrv-test $$FILENAME successful!\033[0m"; \
+	done
+
+rv-test-one: 
+	@if [ -z "$(BIN)" ]; then \
+		echo "Please specify the test file using 'make rv-test-one BIN=rv64xxx.bin'"; \
+		exit 1; \
+	fi
+	@echo "Running test for $(BIN)..."
+	cargo run --release --package nemu-rust --bin nemu-rust -- \
+		--log-level=$(LOG) --term-timeout=0 --firmware $(RV_TEST_ROOT)/binary/$(BIN)
 
 opensbi:
 	cargo run --release --package nemu-rust --bin nemu-rust -- --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./tests/rvtest.bin
@@ -39,5 +60,3 @@ build_opensbi:
 	cd opensbi-1.6 && make CROSS_COMPILE=riscv64-unknown-linux-gnu- PLATFORM=generic PLATFORM_RISCV_ISA=rv64ima_zicsr_zifencei FW_TEXT_START=0x80000000 FW_JUMP_ADDR=0x80200000 FW_FDT_PATH=../nemu-rust.dtb FW_JUMP_FDT_ADDR=0x89000000 -j6
 	cd opensbi-1.6 && riscv64-unknown-linux-gnu-objdump -d build/platform/generic/firmware/fw_jump.elf > disasm	
 
-rv-test: binary
-	cargo run --release --package nemu-rust --bin nemu-rust -- ./tests/rvtest.bin

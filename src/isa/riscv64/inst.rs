@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 
-use crate::isa::riscv64::csr::MCauseCode;
+use crate::isa::riscv64::csr::{CSRs, MCauseCode};
 use crate::isa::riscv64::inst::InstType::{Zicsr, B, I, J, R, S, U};
 use crate::isa::riscv64::reg::{Reg, RegName};
 use crate::isa::riscv64::vaddr::MemOperationSize::{Byte, DWORD, QWORD, WORD};
@@ -319,28 +319,40 @@ macro_rules! gen_arithmetic_uw {
 
 macro_rules! gen_zicsr {
     ($op: tt) => {
-        |inst, state| match state.csrs.$op(
-            inst.imm,
-            state.regs[inst.rs1],
-            inst.rs1 == RegName::zero as u64,
-        ) {
-            Ok(res) => {
-                res.call_hook(state);
-                state.regs[inst.rd] = res.old
+        |inst, state| {
+            if !CSRs::check_privilege(inst.imm, *state.privilege.borrow()) {
+                state.trap(MCauseCode::IllegalInst, Some(inst.inst));
+                return;
             }
-            Err(()) => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
+            match state.csrs.$op(
+                inst.imm,
+                state.regs[inst.rs1],
+                inst.rs1 == RegName::zero as u64,
+            ) {
+                Ok(res) => {
+                    res.call_hook(state);
+                    state.regs[inst.rd] = res.old
+                }
+                Err(()) => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
+            }
         }
     };
 }
 
 macro_rules! gen_zicsr_i {
     ($op: tt) => {
-        |inst, state| match state.csrs.$op(inst.imm, inst.rs1, false) {
-            Ok(res) => {
-                res.call_hook(state);
-                state.regs[inst.rd] = res.old
+        |inst, state| {
+            if !CSRs::check_privilege(inst.imm, *state.privilege.borrow()) {
+                state.trap(MCauseCode::IllegalInst, Some(inst.inst));
+                return;
             }
-            Err(()) => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
+            match state.csrs.$op(inst.imm, inst.rs1, false) {
+                Ok(res) => {
+                    res.call_hook(state);
+                    state.regs[inst.rd] = res.old
+                }
+                Err(()) => state.trap(MCauseCode::IllegalInst, Some(inst.inst)),
+            }
         }
     };
 }
@@ -585,10 +597,10 @@ pub static ref PATTERNS: [Pattern;85] = [
     // Zicsr
     make_pattern("??????? ????? ????? 001 ????? 1110011", Zicsr, "csrrw", gen_zicsr!(set)),
     make_pattern("??????? ????? ????? 010 ????? 1110011", Zicsr, "csrrs", gen_zicsr!(or)),
-    make_pattern("??????? ????? ????? 011 ????? 1110011", Zicsr, "csrrc", gen_zicsr!(and)),
+    make_pattern("??????? ????? ????? 011 ????? 1110011", Zicsr, "csrrc", gen_zicsr!(clear_bits)),
     make_pattern("??????? ????? ????? 101 ????? 1110011", Zicsr, "csrrwi",gen_zicsr_i!(set)),
     make_pattern("??????? ????? ????? 110 ????? 1110011", Zicsr, "csrrsi",gen_zicsr_i!(or)),
-    make_pattern("??????? ????? ????? 111 ????? 1110011", Zicsr, "csrrci",gen_zicsr_i!(and)),
+    make_pattern("??????? ????? ????? 111 ????? 1110011", Zicsr, "csrrci",gen_zicsr_i!(clear_bits)),
     // Zaamo, ignore aq and rl
     make_pattern("00001 ?? ????? ????? 010 ????? 0101111", R, "amoswap.w", gen_zaamo!(wrapping_add, WORD, true)),
     make_pattern("00001 ?? ????? ????? 011 ????? 0101111", R, "amoswap.d", gen_zaamo!(wrapping_add, DWORD, true)),

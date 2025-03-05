@@ -43,10 +43,15 @@ pub struct Args {
 
     #[arg(long)]
     pub log_level: LogLevel,
+
+    /// close the created terminal after n seconds. If not provided, term won't automatically close.
+    #[arg(long)]
+    pub(crate) term_timeout: Option<u64>,
 }
 
 #[derive(ValueEnum, Debug, Default, Copy, Clone)]
 pub enum LogLevel {
+    Warn,
     #[default]
     Info,
     Debug,
@@ -56,6 +61,7 @@ pub enum LogLevel {
 impl From<LogLevel> for LevelFilter {
     fn from(value: LogLevel) -> Self {
         match value {
+            LogLevel::Warn => LevelFilter::Warn,
             LogLevel::Info => LevelFilter::Info,
             LogLevel::Debug => LevelFilter::Debug,
             LogLevel::Trace => LevelFilter::Trace,

@@ -12,7 +12,7 @@ use crate::isa::riscv64::RISCV64Privilege;
 use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
 use bitfield_struct::bitfield;
-use log::{info, warn};
+use log::{info, trace, warn};
 use std::cell::RefCell;
 use std::cmp::PartialEq;
 use std::rc::Rc;
@@ -53,6 +53,15 @@ impl MemOperationSize {
             MemOperationSize::QWORD => unsafe { (dst as *mut u64).write(data) },
         }
     }
+
+    pub fn bitor_sized(&self, data: u64, dst: *mut u8) {
+        match self {
+            MemOperationSize::Byte => unsafe { *dst |= data as u8 },
+            MemOperationSize::WORD => unsafe { *(dst as *mut u16) |= data as u16 },
+            MemOperationSize::DWORD => unsafe { *(dst as *mut u32) |= data as u32 },
+            MemOperationSize::QWORD => unsafe { *(dst as *mut u64) |= data },
+        }
+    }
 }
 
 impl VAddr {
@@ -77,7 +86,7 @@ pub struct TranslationCtrl {
     privilege: Rc<RefCell<RISCV64Privilege>>,
     SUM: bool,
     MXR: bool,
-    MPRV: bool,
+    translate_in_m: bool,
 }
 
 pub(crate) struct MMU {
@@ -153,7 +162,7 @@ impl MMU {
     }
 
     fn pt_walk_debug(&self, vaddr: u64) {
-        info!("pt_walk_debug begin");
+        info!("pt_walk_debug begin, vaddr {:#x}", vaddr);
         let vpn = [
             (vaddr >> 12) & 0b111111111,
             (vaddr >> 21) & 0b111111111,
@@ -163,7 +172,13 @@ impl MMU {
         let mut i = 2;
         for _ in 0..3 {
             let lvl = i;
-            info!("try get pte {} at {:#x}", i, a + vpn[lvl] * 8);
+            info!(
+                "try get pte {} at {:#x} ({:#x}+{:#x})",
+                i,
+                a + vpn[lvl] * 8,
+                a,
+                vpn[lvl] * 8
+            );
             let pte = SV39PTE::from(
                 self.mem
                     .read_mem(&PAddr::new(a + vpn[lvl] * 8), MemOperationSize::DWORD)
@@ -184,13 +199,18 @@ impl MMU {
         }
     }
 
-    pub fn translate(&self, vaddr: &VAddr, typ: MemoryAccessType) -> Result<PAddr, TranslationErr> {
+    pub fn translate(
+        &mut self,
+        vaddr: &VAddr,
+        typ: MemoryAccessType,
+    ) -> Result<PAddr, TranslationErr> {
         if self.translation_ctrl.is_bare
             || (*self.translation_ctrl.privilege.borrow() == RISCV64Privilege::M
-                && !(typ != MemoryAccessType::X && self.translation_ctrl.MPRV))
+                && !(typ != MemoryAccessType::X && self.translation_ctrl.translate_in_m))
         {
             return Ok(PAddr::new(vaddr.value()));
         }
+        trace!("translate vaddr {:#x}", vaddr.value());
 
         let vaddr = vaddr.value();
         let ofs = vaddr & 0b111111111111;
@@ -199,6 +219,7 @@ impl MMU {
             (vaddr >> 21) & 0b111111111,
             (vaddr >> 30) & 0b111111111,
         ];
+        let mut pte_addrs = [0u64; 3];
 
         let mut a = self.translation_ctrl.sv39.lvl1_base;
         let mut res_pte: Option<SV39PTE> = None;
@@ -220,6 +241,7 @@ impl MMU {
             if pte.is_invalid() {
                 return Err(PageFault);
             }
+            pte_addrs[lvl] = a + vpn[lvl] * 8;
             if !pte.is_next_lvl_ptr() {
                 res_pte = Some(pte);
                 break;
@@ -240,17 +262,28 @@ impl MMU {
 
         let privilege = *self.translation_ctrl.privilege.borrow();
         if privilege == RISCV64Privilege::U && !res_pte.U() {
-            return Err(AccessFault);
+            return Err(PageFault);
         }
-        if res_pte.U() && privilege == RISCV64Privilege::S && !self.translation_ctrl.SUM {
-            return Err(AccessFault);
+        if res_pte.U() && privilege != RISCV64Privilege::U && !self.translation_ctrl.SUM {
+            return Err(PageFault);
         }
         if !res_pte.check_access_type(typ, self.translation_ctrl.MXR) {
             warn!("check_access_type failed");
             return Err(PageFault);
         }
 
-        // TODO: pte.a and pte.d
+        // update pte.d
+        for j in i..3 {
+            self.mem
+                .pmem_bitor(
+                    &PAddr::new(pte_addrs[j]),
+                    0b10000000,
+                    MemOperationSize::DWORD,
+                )
+                .unwrap();
+        }
+
+        // TODO: pte.a
         let paddr = if i > 0 {
             let ofs_len = 9 * i + 12;
             (res_pte.PPN() << 12) | vaddr & ((1 << ofs_len) - 1)
@@ -262,7 +295,11 @@ impl MMU {
         Ok(PAddr::new(paddr))
     }
 
-    pub fn ifetch(&self, vaddr: &VAddr, len: MemOperationSize) -> Result<(u64, PAddr), MCauseCode> {
+    pub fn ifetch(
+        &mut self,
+        vaddr: &VAddr,
+        len: MemOperationSize,
+    ) -> Result<(u64, PAddr), MCauseCode> {
         match self.translate(vaddr, MemoryAccessType::X) {
             Ok(paddr) => match self.mem.read(&paddr, len) {
                 Some(v) => Ok((v, paddr)),
@@ -274,7 +311,7 @@ impl MMU {
             },
         }
     }
-    pub fn read(&self, vaddr: &VAddr, len: MemOperationSize) -> Result<u64, MCauseCode> {
+    pub fn read(&mut self, vaddr: &VAddr, len: MemOperationSize) -> Result<u64, MCauseCode> {
         match self.translate(vaddr, MemoryAccessType::R) {
             Ok(paddr) => match self.mem.read(&paddr, len) {
                 Some(v) => Ok(v),
@@ -323,7 +360,7 @@ impl MMU {
     pub fn update_priv(&mut self, mstatus: &MStatus) {
         self.translation_ctrl.SUM = mstatus.SUM();
         self.translation_ctrl.MXR = mstatus.MXR();
-        self.translation_ctrl.MPRV = mstatus.MPRV();
+        self.translation_ctrl.translate_in_m = mstatus.MPRV() && !mstatus.MPP_is_m_mode();
     }
 }
 
@@ -335,7 +372,7 @@ impl TranslationCtrl {
             privilege,
             SUM: false,
             MXR: false,
-            MPRV: false,
+            translate_in_m: false,
         }
     }
 }

@@ -108,7 +108,7 @@ impl DbgContext {
         }
         for (idx, breakpoint) in self.breakpoints.iter() {
             if emulator.cpu.isa_get_pc() == *breakpoint {
-                info!("Breakpoint {}: {}", idx, breakpoint);
+                info!("Breakpoint {}: {:#x}", idx, breakpoint);
                 pause = true;
                 break;
             }
@@ -171,14 +171,23 @@ impl Drop for DbgContext {
 pub fn sdb_loop<T: Isa>(emulator: &mut Emulator<T>) -> (u64, u8) {
     let mut ctx = DbgContext::new();
     let mut rl = DefaultEditor::new().unwrap();
+    let mut last_input: Option<String> = None;
     loop {
         let readline = rl.readline(format!("({:#x})>> ", emulator.cpu.isa_get_pc()).as_str());
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str()).expect("Rustyline err");
-                if line.len() == 0 {
-                    continue;
-                }
+                let line = if line.len() == 0 {
+                    if let Some(last) = &last_input {
+                        last
+                    } else {
+                        info!("empty line");
+                        continue;
+                    }
+                } else {
+                    last_input = Some(line);
+                    last_input.as_ref().unwrap()
+                };
                 let line = line.trim_start();
                 match line.as_bytes()[0] as char {
                     'h' => {

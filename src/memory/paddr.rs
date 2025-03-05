@@ -100,6 +100,19 @@ impl Memory {
         None
     }
 
+    pub fn pmem_bitor(
+        &mut self,
+        paddr: &PAddr,
+        data: u64,
+        len: MemOperationSize,
+    ) -> Result<(), ()> {
+        if let Some(ptr) = self.get_mem_ptr_mut(paddr) {
+            len.bitor_sized(data, ptr);
+            return Ok(());
+        }
+        Err(())
+    }
+
     pub fn write(&mut self, paddr: &PAddr, data: u64, len: MemOperationSize) -> Result<(), ()> {
         if let Some(ptr) = self.get_mem_ptr_mut(paddr) {
             len.write_sized(data, ptr);

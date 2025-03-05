@@ -9,6 +9,7 @@ use crate::device::emu::vga::{
     VGACtrl, SCREEN_H, SCREEN_W, VGA, VGA_CTL_MMIO_START, VGA_FRAME_BUF_MMIO_START,
 };
 use crate::memory::Memory;
+use crate::monitor::Args;
 use lazy_static::lazy_static;
 use sdl2::event::Event;
 use sdl2::pixels::PixelFormatEnum;
@@ -32,7 +33,7 @@ lazy_static! {
 }
 
 impl Devices {
-    pub fn new(stopped: Arc<AtomicBool>, memory: &mut Memory, _no_sdl: bool) -> Self {
+    pub fn new(stopped: Arc<AtomicBool>, memory: &mut Memory, args: &Args) -> Self {
         let stopped_clone = stopped.clone();
         let cpu_interrupt_bits = Arc::new(AtomicU64::new(0));
 
@@ -46,7 +47,11 @@ impl Devices {
             cpu_interrupt_bits.clone(),
             stopped.clone(),
         )));
-        let uart16550 = Arc::new(Mutex::new(UART16550::new(plic.clone(), stopped.clone())));
+        let uart16550 = Arc::new(Mutex::new(UART16550::new(
+            plic.clone(),
+            stopped.clone(),
+            args.term_timeout,
+        )));
 
         memory.add_mmio(VGA_FRAME_BUF_MMIO_START, vga.clone());
         memory.add_mmio(VGA_CTL_MMIO_START, vga_ctrl.clone());
