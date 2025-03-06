@@ -53,7 +53,7 @@ impl<T: Isa> Emulator<T> {
             Some(DifftestContext::init(
                 cpu.isa_difftest_init(),
                 &args.firmware,
-                &args.image.unwrap(),
+                &"".to_string(), // &args.image.unwrap(),
             ))
         } else {
             None

@@ -127,9 +127,9 @@ impl Decode {
         state.regs[self.rs1] as i64
     }
 
-    fn src1_u32(&self, state: &RISCV64CpuState) -> u32 {
-        state.regs[self.rs1] as u32
-    }
+    // fn src1_u32(&self, state: &RISCV64CpuState) -> u32 {
+    //     state.regs[self.rs1] as u32
+    // }
     fn src1_i32(&self, state: &RISCV64CpuState) -> i32 {
         state.regs[self.rs1] as i32
     }
@@ -147,9 +147,9 @@ impl Decode {
     fn src2_i64(&self, state: &RISCV64CpuState) -> i64 {
         state.regs[self.rs2] as i64
     }
-    fn src2_u32(&self, state: &RISCV64CpuState) -> u32 {
-        state.regs[self.rs2] as u32
-    }
+    // fn src2_u32(&self, state: &RISCV64CpuState) -> u32 {
+    //     state.regs[self.rs2] as u32
+    // }
     fn src2_i32(&self, state: &RISCV64CpuState) -> i32 {
         state.regs[self.rs2] as i32
     }
@@ -291,13 +291,65 @@ macro_rules! gen_arithmetic {
     };
 }
 
-macro_rules! gen_arithmetic_u {
-    ($op: tt) => {
+macro_rules! gen_div {
+    ($typ: ty) => {
         |inst, state| {
-            state.regs[inst.rd] = inst.src1(state).$op(inst.src2(state));
+            let src1 = state.regs[inst.rs1] as $typ;
+            let src2 = state.regs[inst.rs2] as $typ;
+            state.regs[inst.rd] = match src2 {
+                0 => -1i64 as u64,
+                _ => src1.wrapping_div(src2) as u64,
+            }
         }
     };
 }
+
+macro_rules! gen_div_w {
+    ($typ: ty) => {
+        |inst, state| {
+            let src1 = state.regs[inst.rs1] as $typ;
+            let src2 = state.regs[inst.rs2] as $typ;
+            state.regs[inst.rd] = sign_ext_32to64(match src2 {
+                0 => -1i64 as u64,
+                _ => src1.wrapping_div(src2) as u64,
+            });
+        }
+    };
+}
+
+macro_rules! gen_rem {
+    ($typ: ty) => {
+        |inst, state| {
+            let src1 = state.regs[inst.rs1] as $typ;
+            let src2 = state.regs[inst.rs2] as $typ;
+            state.regs[inst.rd] = match src2 {
+                0 => src1 as u64,
+                _ => src1.wrapping_rem(src2) as u64,
+            }
+        }
+    };
+}
+
+macro_rules! gen_rem_w {
+    ($typ: ty) => {
+        |inst, state| {
+            let src1 = state.regs[inst.rs1] as $typ;
+            let src2 = state.regs[inst.rs2] as $typ;
+            state.regs[inst.rd] = sign_ext_32to64(match src2 {
+                0 => src1 as u64,
+                _ => src1.wrapping_rem(src2) as u64,
+            });
+        }
+    };
+}
+
+// macro_rules! gen_arithmetic_u {
+//     ($op: tt) => {
+//         |inst, state| {
+//             state.regs[inst.rd] = inst.src1(state).$op(inst.src2(state));
+//         }
+//     };
+// }
 
 macro_rules! gen_arithmetic_w {
     ($op: tt) => {
@@ -308,14 +360,14 @@ macro_rules! gen_arithmetic_w {
     };
 }
 
-macro_rules! gen_arithmetic_uw {
-    ($op: tt) => {
-        |inst, state| {
-            state.regs[inst.rd] =
-                sign_ext_32to64(inst.src1_u32(state).$op(inst.src2_u32(state)) as u64);
-        }
-    };
-}
+// macro_rules! gen_arithmetic_uw {
+//     ($op: tt) => {
+//         |inst, state| {
+//             state.regs[inst.rd] =
+//                 sign_ext_32to64(inst.src1_u32(state).$op(inst.src2_u32(state)) as u64);
+//         }
+//     };
+// }
 
 macro_rules! gen_zicsr {
     ($op: tt) => {
@@ -373,7 +425,7 @@ macro_rules! gen_zaamo {
             }
             match state.memory.read(&addr, $size) {
                 Ok(v) => {
-                    let src2 = if $size == WORD {
+                    let src2 = if $size == DWORD {
                         inst.src2_trunc32(state)
                     } else {
                         inst.src2(state)
@@ -382,7 +434,11 @@ macro_rules! gen_zaamo {
                     if state.memory.write(&addr, res, $size).is_err() {
                         state.trap(MCauseCode::StoreAMOAccessFault, Some(addr.value()));
                     } else {
-                        state.regs[inst.rd] = if $size == WORD { sign_ext_32to64(v) } else { v };
+                        state.regs[inst.rd] = if $size == DWORD {
+                            sign_ext_32to64(v)
+                        } else {
+                            v
+                        };
                     }
                 }
                 Err(err) => state.trap(err, Some(addr.value())),
@@ -428,17 +484,17 @@ pub static ref PATTERNS: [Pattern;85] = [
     make_pattern("0000000 ????? ????? 000 ????? 0110011", R, "add", gen_arithmetic!(wrapping_add)),
     make_pattern("0100000 ????? ????? 000 ????? 0110011", R, "sub", gen_arithmetic!(wrapping_sub)),
     make_pattern("0000001 ????? ????? 000 ????? 0110011", R, "mul", gen_arithmetic!(wrapping_mul)),
-    make_pattern("0000001 ????? ????? 100 ????? 0110011", R, "div", gen_arithmetic!(wrapping_div)),
-    make_pattern("0000001 ????? ????? 101 ????? 0110011", R, "divu", gen_arithmetic_u!(wrapping_div)),
-    make_pattern("0000001 ????? ????? 110 ????? 0110011", R, "rem", gen_arithmetic!(wrapping_rem)),
-    make_pattern("0000001 ????? ????? 111 ????? 0110011", R, "remu", gen_arithmetic_u!(wrapping_rem)),
+    make_pattern("0000001 ????? ????? 100 ????? 0110011", R, "div", gen_div!(i64)),
+    make_pattern("0000001 ????? ????? 101 ????? 0110011", R, "divu", gen_div!(u64)),
+    make_pattern("0000001 ????? ????? 110 ????? 0110011", R, "rem", gen_rem!(i64)),
+    make_pattern("0000001 ????? ????? 111 ????? 0110011", R, "remu", gen_rem!(u64)),
     make_pattern("0000000 ????? ????? 000 ????? 0111011", R, "addw", gen_arithmetic_w!(wrapping_add)),
     make_pattern("0100000 ????? ????? 000 ????? 0111011", R, "subw", gen_arithmetic_w!(wrapping_sub)),
     make_pattern("0000001 ????? ????? 000 ????? 0111011", R, "mulw", gen_arithmetic_w!(wrapping_mul)),
-    make_pattern("0000001 ????? ????? 100 ????? 0111011", R, "divw", gen_arithmetic_w!(wrapping_div)),
-    make_pattern("0000001 ????? ????? 101 ????? 0111011", R, "divuw", gen_arithmetic_uw!(wrapping_div)),
-    make_pattern("0000001 ????? ????? 110 ????? 0111011", R, "remw", gen_arithmetic_w!(wrapping_rem)),
-    make_pattern("0000001 ????? ????? 111 ????? 0111011", R, "remuw", gen_arithmetic_uw!(wrapping_rem)),
+    make_pattern("0000001 ????? ????? 100 ????? 0111011", R, "divw", gen_div_w!(i32)),
+    make_pattern("0000001 ????? ????? 101 ????? 0111011", R, "divuw", gen_div_w!(u32)),
+    make_pattern("0000001 ????? ????? 110 ????? 0111011", R, "remw", gen_rem_w!(i32)),
+    make_pattern("0000001 ????? ????? 111 ????? 0111011", R, "remuw", gen_rem_w!(u32)),
     make_pattern(
         "0000001 ????? ????? 011 ????? 0110011", R, "mulhu",
         |inst, state| {
@@ -602,19 +658,19 @@ pub static ref PATTERNS: [Pattern;85] = [
     make_pattern("??????? ????? ????? 110 ????? 1110011", Zicsr, "csrrsi",gen_zicsr_i!(or)),
     make_pattern("??????? ????? ????? 111 ????? 1110011", Zicsr, "csrrci",gen_zicsr_i!(clear_bits)),
     // Zaamo, ignore aq and rl
-    make_pattern("00001 ?? ????? ????? 010 ????? 0101111", R, "amoswap.w", gen_zaamo!(wrapping_add, WORD, true)),
-    make_pattern("00001 ?? ????? ????? 011 ????? 0101111", R, "amoswap.d", gen_zaamo!(wrapping_add, DWORD, true)),
+    make_pattern("00001 ?? ????? ????? 010 ????? 0101111", R, "amoswap.w", gen_zaamo!(wrapping_add, DWORD, true)),
+    make_pattern("00001 ?? ????? ????? 011 ????? 0101111", R, "amoswap.d", gen_zaamo!(wrapping_add, QWORD, true)),
     make_pattern("00000 ?? ????? ????? 010 ????? 0101111", R, "amoadd.w", gen_zaamo!(wrapping_add, DWORD, false)),
-    make_pattern("00000 ?? ????? ????? 011 ????? 0101111", R, "amoadd.d", gen_zaamo!(wrapping_add, DWORD, false)),
-    make_pattern("01000 ?? ????? ????? 010 ????? 0101111", R, "amoor.d", gen_zaamo!(bitor, DWORD, false)),
-    make_pattern("01000 ?? ????? ????? 011 ????? 0101111", R, "amoor.d", gen_zaamo!(bitor, DWORD, false)),
-    make_pattern("01100 ?? ????? ????? 010 ????? 0101111", R, "amoor.d", gen_zaamo!(bitand, DWORD, false)),
-    make_pattern("01100 ?? ????? ????? 011 ????? 0101111", R, "amoor.d", gen_zaamo!(bitand, DWORD, false)),
+    make_pattern("00000 ?? ????? ????? 011 ????? 0101111", R, "amoadd.d", gen_zaamo!(wrapping_add, QWORD, false)),
+    make_pattern("01000 ?? ????? ????? 010 ????? 0101111", R, "amoor.w", gen_zaamo!(bitor, DWORD, false)),
+    make_pattern("01000 ?? ????? ????? 011 ????? 0101111", R, "amoor.d", gen_zaamo!(bitor, QWORD, false)),
+    make_pattern("01100 ?? ????? ????? 010 ????? 0101111", R, "amoand.w", gen_zaamo!(bitand, DWORD, false)),
+    make_pattern("01100 ?? ????? ????? 011 ????? 0101111", R, "amoand.d", gen_zaamo!(bitand, QWORD, false)),
     // zalrsc, memory mark not implemented. we assume store is always success.
-    make_pattern("00010 ?? 00000 ????? 011 ????? 0101111", R, "lr.d", gen_load!(DWORD)),
-    make_pattern("00010 ?? 00000 ????? 010 ????? 0101111", R, "lr.w", gen_load!(WORD)),
-    make_pattern("00011 ?? ????? ????? 011 ????? 0101111", R, "sc.d", gen_store!(DWORD, true)),
-    make_pattern("00011 ?? ????? ????? 010 ????? 0101111", R, "sc.w", gen_store!(WORD, true)),
+    make_pattern("00010 ?? 00000 ????? 011 ????? 0101111", R, "lr.d", gen_load_u!(QWORD)),
+    make_pattern("00010 ?? 00000 ????? 010 ????? 0101111", R, "lr.w", gen_load!(DWORD)),
+    make_pattern("00011 ?? ????? ????? 011 ????? 0101111", R, "sc.d", gen_store!(QWORD, true)),
+    make_pattern("00011 ?? ????? ????? 010 ????? 0101111", R, "sc.w", gen_store!(DWORD, true)),
 
     // misc
     make_pattern(

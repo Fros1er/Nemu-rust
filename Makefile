@@ -28,13 +28,16 @@ rv-test: $(RV_TEST_BINS)
 		echo "\033[32mrv-test $$FILENAME successful!\033[0m"; \
 	done
 
+DIFFTEST :=
+DIFFTEST_$(DIFFTEST) := --difftest
+
 rv-test-one: 
 	@if [ -z "$(BIN)" ]; then \
 		echo "Please specify the test file using 'make rv-test-one BIN=rv64xxx.bin'"; \
 		exit 1; \
 	fi
 	@echo "Running test for $(BIN)..."
-	cargo run --release --package nemu-rust --bin nemu-rust -- \
+	cargo run --release --package nemu-rust --bin nemu-rust -- $(DIFFTEST_y) \
 		--log-level=$(LOG) --term-timeout=0 --firmware $(RV_TEST_ROOT)/binary/$(BIN)
 
 opensbi:

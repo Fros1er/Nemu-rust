@@ -56,11 +56,11 @@ impl DbgContext {
         }
     }
     fn exec_once_dbg<T: Isa>(&mut self, emulator: &mut Emulator<T>) -> (bool, bool, bool) {
-        // cfg_if_feat!("difftest", {
-        //     if emulator.difftest_ctx.is_some() {
-        //         emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.step();
-        //     }
-        // });
+        cfg_if_feat!("difftest", {
+            if emulator.difftest_ctx.is_some() {
+                emulator.difftest_ctx.as_mut().unwrap().gdb_ctx.step();
+            }
+        });
 
         let pc = emulator.cpu.isa_get_pc();
 
@@ -70,26 +70,26 @@ impl DbgContext {
 
         let mut pause = false;
 
-        // cfg_if_feat!("difftest", {
-        //     if emulator.difftest_ctx.is_some() {
-        //         let difftest_regs = emulator
-        //             .difftest_ctx
-        //             .as_mut()
-        //             .unwrap()
-        //             .gdb_ctx
-        //             .read_regs_64();
-        //         let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
-        //         if difftest_res.is_err() {
-        //             info!("{}", difftest_res.err().unwrap());
-        //             return (false, false, false);
-        //         }
-        //         info!(
-        //             "identical at pc {:#x}, {} inst in total",
-        //             emulator.cpu.isa_get_pc(),
-        //             self.inst_count
-        //         );
-        //     }
-        // });
+        cfg_if_feat!("difftest", {
+            if emulator.difftest_ctx.is_some() {
+                let difftest_regs = emulator
+                    .difftest_ctx
+                    .as_mut()
+                    .unwrap()
+                    .gdb_ctx
+                    .read_regs_64();
+                let difftest_res = emulator.cpu.isa_difftest_check_regs(&difftest_regs);
+                if difftest_res.is_err() {
+                    info!("{}", difftest_res.err().unwrap());
+                    return (false, false, false);
+                }
+                info!(
+                    "identical at pc {:#x}, {} inst in total",
+                    emulator.cpu.isa_get_pc(),
+                    self.inst_count
+                );
+            }
+        });
 
         for (idx, watchpoint) in self.watchpoints.iter_mut() {
             let eval_res = eval_expr(&watchpoint.expr, emulator);
