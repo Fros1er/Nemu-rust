@@ -4,12 +4,15 @@
 	#size-cells = <1>;
 	compatible = "nemurust-unknown-dev";
 	model = "nemurust-unknown";
+	
+	chosen {
+    		stdout-path = &L100;
+	};
 	L15: cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
 		timebase-frequency = <250000>;
 		L4: cpu@0 {
-			clock-frequency = <0>;
 			compatible = "sifive,rocket0", "riscv";
 			device_type = "cpu";
 			mmu-type = "riscv,sv39";
@@ -54,17 +57,11 @@
             riscv,max-priority = <1>;
             riscv,ndev = <10>;
         };
-		L0: subsystem_pbus_clock {
-			#clock-cells = <0>;
-			clock-frequency = <25000000>;
-			clock-output-names = "subsystem_pbus_clock";
-			compatible = "fixed-clock";
-		};
 		L100: uart@10000000 {
 		    device_type = "serial";
 		    compatible = "ns16550";
 		    reg = <0x10000000 0x100>;
-            clock-frequency = <0>;
+            clock-frequency = <100000>;
             interrupt-parent = <&L5>;
             interrupts = <10>;
 		};

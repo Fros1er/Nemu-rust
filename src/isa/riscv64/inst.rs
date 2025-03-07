@@ -448,7 +448,7 @@ macro_rules! gen_zaamo {
 }
 
 lazy_static! {
-pub static ref PATTERNS: [Pattern;85] = [
+pub static ref PATTERNS: [Pattern;86] = [
     // memory
     make_pattern("??????? ????? ????? 000 ????? 0000011", I, "lb", gen_load!(Byte)),
     make_pattern("??????? ????? ????? 100 ????? 0000011", I, "lbu", gen_load_u!(Byte)),
@@ -545,6 +545,12 @@ pub static ref PATTERNS: [Pattern;85] = [
         },
     ),
     make_pattern(
+        "010000 ?????? ????? 101 ????? 0110011", I, "sra",
+        |inst, state| {
+            state.regs[inst.rd] = (inst.src1(state) as i64 >> (inst.src2(state) & 0b111111)) as u64;
+        },
+    ),
+make_pattern(
         "0000000 ????? ????? 001 ????? 0111011", R, "sllw",
         |inst, state| {
             state.regs[inst.rd] = sign_ext_32to64(inst.src1_trunc32(state) << (inst.src2(state) & 0b11111));

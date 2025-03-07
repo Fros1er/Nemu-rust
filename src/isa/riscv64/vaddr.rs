@@ -12,7 +12,7 @@ use crate::isa::riscv64::RISCV64Privilege;
 use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
 use bitfield_struct::bitfield;
-use log::{info, trace, warn};
+use log::{debug, trace, warn};
 use std::cell::RefCell;
 use std::cmp::PartialEq;
 use std::rc::Rc;
@@ -162,7 +162,10 @@ impl MMU {
     }
 
     fn pt_walk_debug(&self, vaddr: u64) {
-        info!("pt_walk_debug begin, vaddr {:#x}", vaddr);
+        if log::max_level() < log::LevelFilter::Debug {
+            return;
+        }
+        debug!("pt_walk_debug begin, vaddr {:#x}", vaddr);
         let vpn = [
             (vaddr >> 12) & 0b111111111,
             (vaddr >> 21) & 0b111111111,
@@ -172,7 +175,7 @@ impl MMU {
         let mut i = 2;
         for _ in 0..3 {
             let lvl = i;
-            info!(
+            debug!(
                 "try get pte {} at {:#x} ({:#x}+{:#x})",
                 i,
                 a + vpn[lvl] * 8,
@@ -184,7 +187,7 @@ impl MMU {
                     .read_mem(&PAddr::new(a + vpn[lvl] * 8), MemOperationSize::DWORD)
                     .unwrap(),
             );
-            info!("pte {} {:#x}", i, pte.0);
+            debug!("pte {} {:#x}", i, pte.0);
             if pte.0 == 0x0 {
                 return;
             }

@@ -13,6 +13,7 @@ use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use bitfield_struct::bitfield;
 
 pub const UART16550_MMIO_START: PAddr = PAddr::new(0x10000000);
 
@@ -21,8 +22,12 @@ struct LCR {
     dlab_en: bool,
 }
 
+#[bitfield(u8)]
 struct IER {
-    data_ready_int_en: Arc<AtomicBool>,
+    // data_ready_int_en: Arc<AtomicBool>,
+    data_ready_int_en: bool,
+    #[bits(7)]
+    _1: u8
 }
 
 pub struct UART16550 {
@@ -30,7 +35,7 @@ pub struct UART16550 {
     out_rb: UnsafeCell<CachingProd<Arc<SharedRb<Heap<u8>>>>>,
     out_notify: Arc<tokio::sync::Notify>,
     lcr: LCR,
-    ier: IER,
+    ier: Arc<AtomicU8>,
     mem: [u8; 16],
     plic: Arc<Mutex<PLIC>>,
 }
@@ -49,13 +54,11 @@ impl UART16550 {
 
         let stopped_clone = stopped.clone();
 
-        let data_ready_int_en = Arc::new(AtomicBool::new(false));
+        //let data_ready_int_en = Arc::new(AtomicBool::new(false));
+        let ier = Arc::new(Atomic)
         let data_ready_int_en_clone = data_ready_int_en.clone();
 
-        if term_close_timeout.is_some() && term_close_timeout.unwrap() == 0 {
-            info!("UART Server won't start due to term_timeout is 0");
-        } else {
-            let plic_clone = plic.clone();
+let plic_clone = plic.clone();
             let _tokio_thread = thread::spawn(move || {
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_io()
@@ -103,6 +106,10 @@ impl UART16550 {
                 });
             });
 
+
+        if term_close_timeout.is_some() && term_close_timeout.unwrap() == 0 {
+            info!("UART Server won't start due to term_timeout is 0");
+        } else {
             let timeout_str = match term_close_timeout {
                 Some(timeout) => format!("-w {}", timeout),
                 None => "".to_string(),
@@ -141,6 +148,7 @@ impl IOMap for UART16550 {
     fn read(&self, offset: usize, len: MemOperationSize) -> u64 {
         assert!(len == MemOperationSize::Byte);
         let rb = unsafe { &mut *self.in_rb.get() };
+        info!("UART read. ofs: {}", offset);
         match offset {
             0 => {
                 let res = rb.try_pop().unwrap_or(0) as u64;
@@ -167,7 +175,7 @@ impl IOMap for UART16550 {
 
     fn write(&mut self, offset: usize, data: u64, len: MemOperationSize) {
         assert!(len == MemOperationSize::Byte);
-
+        info!("UART write. ofs: {}, data: {}", offset, data);
         let mem_offset = if self.lcr.dlab_en {
             match offset {
                 0b000 | 0b001 | 0b101 => offset | 0b1000,
