@@ -1,12 +1,11 @@
 use crate::isa::riscv64::csr::mstatus::MStatus;
 use crate::isa::riscv64::csr::CSRName::{
-    mcause, medeleg, mepc, mideleg, mie, mip, mstatus, mtval, mtvec, scause, sepc, sie, sip, stval,
-    stvec,
+    mcause, medeleg, mepc, mideleg, mie, mstatus, mtval, mtvec, scause, sepc, sie, stval, stvec,
 };
 use crate::isa::riscv64::csr::MCauseCode::{MExtInt, MTimerInt, SExtInt, STimerInt};
 use crate::isa::riscv64::csr::{CSRName, CSRs, MCauseCode};
 use crate::isa::riscv64::ibuf::SetAssociativeIBuf;
-use crate::isa::riscv64::inst::PATTERNS;
+use crate::isa::riscv64::inst::{Pattern, PATTERNS};
 use crate::isa::riscv64::logo::RISCV_LOGO;
 use crate::isa::riscv64::reg::RegName::{a0, a1, a2, a7, t0};
 use crate::isa::riscv64::reg::{format_regs, RegName, Registers};
@@ -16,17 +15,20 @@ use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
 use crate::monitor::sdb::difftest_qemu::DifftestInfo;
 use crate::monitor::Args;
+use crate::utils::cfg_if_feat;
 use crate::utils::configs::CONFIG_MEM_BASE;
 use crate::utils::disasm::LLVMDisassembler;
+use cfg_if::cfg_if;
 use log::{debug, error, info, warn};
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::UnsafeCell;
+use std::collections::HashMap;
 use std::fmt::Write;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
-use std::thread;
+use std::{fs, thread};
 use strum::IntoEnumIterator;
 use strum_macros::FromRepr;
 use vaddr::MemOperationSize::DWORD;
@@ -43,9 +45,9 @@ pub struct RISCV64 {
     state: RISCV64CpuState,
     disassembler: LLVMDisassembler,
     ibuf: SetAssociativeIBuf,
-    cpu_interrupt_bits: Arc<AtomicU64>,
     stop_at_ebreak: bool,
     stopped: Arc<AtomicBool>,
+    sorted_patterns: Vec<&'static Pattern>,
 }
 
 #[derive(PartialEq, Copy, Clone, FromRepr, Debug)]
@@ -61,12 +63,15 @@ pub struct RISCV64CpuState {
     pc: VAddr,
     dyn_pc: Option<VAddr>,
     memory: MMU,
-    privilege: Rc<RefCell<RISCV64Privilege>>,
+    privilege: Rc<UnsafeCell<RISCV64Privilege>>,
     backtrace: Vec<u64>,
     stopping: bool,
-    last_interrupt: u64,
     wfi: bool,
     cycles: Rc<UnsafeCell<u64>>,
+    pub inst_counter: HashMap<*const Pattern, u64>,
+    interrupt_bits: Arc<AtomicU64>,
+    prev_interrupt_bits: u64,
+    interrupt_cond_dirty: bool,
 }
 
 impl Drop for RISCV64CpuState {
@@ -86,49 +91,62 @@ impl Drop for RISCV64CpuState {
 }
 
 impl RISCV64CpuState {
-    fn new(memory: Memory, reset_vector: &PAddr) -> Self {
-        let privilege = Rc::new(RefCell::new(RISCV64Privilege::M));
+    #[allow(unused_mut)]
+    fn new(memory: Memory, reset_vector: &PAddr, interrupt_bits: Arc<AtomicU64>) -> Self {
+        let privilege = Rc::new(UnsafeCell::new(RISCV64Privilege::M));
         let mmu = MMU::new(memory, privilege.clone());
         let cycles = Rc::new(UnsafeCell::new(0));
+
+        let mut inst_counter = HashMap::new();
+
+        cfg_if_feat!("log_inst", {
+            for pat in PATTERNS.iter() {
+                inst_counter.insert(pat as *const Pattern, 0);
+            }
+        });
+
         Self {
             regs: Registers::new(),
-            csrs: CSRs::new(cycles.clone()),
+            csrs: CSRs::new(cycles.clone(), interrupt_bits.clone()),
             pc: mmu.paddr_to_vaddr(reset_vector),
             dyn_pc: None,
             memory: mmu,
             privilege,
             backtrace: Vec::new(),
             stopping: false,
-            last_interrupt: 0,
             wfi: false,
             cycles,
+            inst_counter,
+            interrupt_bits,
+            prev_interrupt_bits: 0,
+            interrupt_cond_dirty: true,
         }
     }
-    pub(crate) fn handle_interrupt(&mut self, interrupt_bits: u64) {
-        if interrupt_bits != self.last_interrupt {
-            self.last_interrupt = interrupt_bits;
-            if interrupt_bits == 0 {
-                self.csrs.set_zero_fast(mip);
-                self.csrs.set_zero_fast(sip);
-            } else {
-                self.csrs.set_n(mip, interrupt_bits).unwrap();
-                self.csrs.set_n(sip, interrupt_bits).unwrap();
-            }
-        }
+    #[inline(never)]
+    pub(crate) fn handle_interrupt(&mut self) {
+        let interrupt_bits = self.interrupt_bits.load(SeqCst);
         if interrupt_bits == 0 {
             return;
         }
 
+        if self.prev_interrupt_bits == interrupt_bits && self.interrupt_cond_dirty == false {
+            return;
+        }
+
+        self.interrupt_cond_dirty = false;
+        self.prev_interrupt_bits = interrupt_bits;
+
         // interrupt handle
-        let prev_priv = *self.privilege.borrow();
+        let prev_priv = self.current_priv();
         let mut goto_s_mode = false;
         let mut cause = MCauseCode::None;
 
         let mideleg_set = self.csrs[mideleg] & interrupt_bits != 0;
+        let mstatus_val = MStatus::from_bits(self.csrs[mstatus]);
         if prev_priv != RISCV64Privilege::M {
             if mideleg_set
                 && (prev_priv == RISCV64Privilege::U
-                    || MStatus::from_bits(self.csrs[mstatus]).SIE()) // if S, check SIE. if U, ignore SIE
+                    || (mstatus_val.SIE() || self.wfi)) // if S, check SIE. if U, ignore SIE
                 && (interrupt_bits & self.csrs[sie] != 0)
             {
                 goto_s_mode = true;
@@ -144,7 +162,7 @@ impl RISCV64CpuState {
                 }
             }
         } else {
-            if !MStatus::from_bits(self.csrs[mstatus]).MIE() {
+            if !(mstatus_val.MIE() || self.wfi) {
                 return;
             }
         }
@@ -184,8 +202,9 @@ impl RISCV64CpuState {
             self.pc.value(),
             prev_priv,
             next_priv,
-            MStatus::from_bits(self.csrs[mstatus]).SIE()
+            mstatus_val.SIE()
         );
+        self.set_interrupt_cond_dirty();
         self.wfi = false;
         self.trap_update_csrs(cause, prev_priv, next_priv, None);
     }
@@ -234,7 +253,7 @@ impl RISCV64CpuState {
         //     prev_priv,
         //     next_priv
         // );
-        self.privilege.replace(next_priv);
+        self.set_priv(next_priv);
     }
 
     fn trap(&mut self, cause: MCauseCode, mtval_val: Option<u64>) {
@@ -258,9 +277,9 @@ impl RISCV64CpuState {
             return;
         }
 
-        let is_deleg = *self.privilege.borrow() != RISCV64Privilege::M
+        let is_deleg = self.current_priv() != RISCV64Privilege::M
             && (self.csrs[medeleg] & (1u64 << cause as u64)) != 0;
-        let prev_priv = *self.privilege.borrow();
+        let prev_priv = self.current_priv();
         let next_priv = if is_deleg {
             RISCV64Privilege::S
         } else {
@@ -272,11 +291,16 @@ impl RISCV64CpuState {
         //     self.csrs[medeleg], is_deleg, prev_priv, next_priv
         // );
 
-        if *self.privilege.borrow() == RISCV64Privilege::U {
+        if self.current_priv() == RISCV64Privilege::U {
             debug!(
                 "User trap! medeleg = {:#x}, cause = {:?}, next_priv = {:?}, to stvec {:#x}",
                 self.csrs[medeleg], cause, next_priv, self.csrs[stvec]
             )
+        } else if self.current_priv() == RISCV64Privilege::S {
+            debug!(
+                "Kernel trap! mstatus = {:?}",
+                MStatus::from_bits(self.csrs[mstatus])
+            );
         }
 
         self.trap_update_csrs(cause, prev_priv, next_priv, mtval_val);
@@ -288,7 +312,7 @@ impl RISCV64CpuState {
     }
 
     fn ret(&mut self, ret_inst: RISCV64Privilege) {
-        if ret_inst != *self.privilege.borrow() {
+        if ret_inst != self.current_priv() {
             self.trap(MCauseCode::IllegalInst, None);
             return;
         }
@@ -322,7 +346,7 @@ impl RISCV64CpuState {
         //     next_priv
         // );
 
-        self.privilege.replace(next_priv);
+        self.set_priv(next_priv);
     }
 
     fn get_backtrace_string(&self) -> String {
@@ -331,6 +355,23 @@ impl RISCV64CpuState {
             write!(&mut res, "#{}: {:#x}\n", i, addr - 4).unwrap();
         }
         res
+    }
+
+    fn current_priv(&self) -> RISCV64Privilege {
+        unsafe { *self.privilege.get() }
+    }
+
+    fn set_priv(&mut self, privilege: RISCV64Privilege) {
+        unsafe {
+            if *self.privilege.get() != privilege {
+                *self.privilege.get() = privilege;
+                self.set_interrupt_cond_dirty();
+            }
+        }
+    }
+
+    pub fn set_interrupt_cond_dirty(&mut self) {
+        self.interrupt_cond_dirty = true;
     }
 }
 
@@ -344,7 +385,16 @@ impl Isa for RISCV64 {
         // let reset_addr: PAddr = CONFIG_MBASE + CONFIG_PC_RESET_OFFSET;
         let reset_addr: PAddr = PAddr::new(CONFIG_MEM_BASE.value());
         // let reset_addr: PAddr = PAddr::new(CONFIG_FIRMWARE_BASE.value());
-        let state = RISCV64CpuState::new(memory, &reset_addr);
+        let state = RISCV64CpuState::new(memory, &reset_addr, cpu_interrupt_bits);
+
+        let mut sorted_patterns = Vec::new();
+        for line in fs::read_to_string("./inst_perf.txt").unwrap().lines().rev() {
+            let colon = line.find(":").unwrap();
+            let name = line[..colon].trim();
+            let pat = PATTERNS.iter().find(|&p| p._name == name).unwrap();
+            sorted_patterns.push(pat);
+        }
+
         Self {
             state,
             disassembler: LLVMDisassembler::new(
@@ -352,9 +402,9 @@ impl Isa for RISCV64 {
                 "rv64imafd_zicsr_zifencei",
             ),
             ibuf: SetAssociativeIBuf::new(),
-            cpu_interrupt_bits,
             stop_at_ebreak: !args.ignore_isa_breakpoint,
             stopped,
+            sorted_patterns,
         }
     }
     fn isa_logo() -> &'static [u8] {
@@ -365,7 +415,7 @@ impl Isa for RISCV64 {
             info!("{:?}: {:#x}", reg, self.state.regs[reg.clone()]);
         }
         info!("pc: {:#x}", self.state.pc.value());
-        info!("priv: {:?}", *self.state.privilege.borrow());
+        info!("priv: {:?}", self.state.current_priv());
         for reg in CSRName::iter() {
             info!("{:?}: {:#x}", reg, self.state.csrs[reg]);
         }
@@ -415,7 +465,7 @@ impl Isa for RISCV64 {
                             return false;
                         }
                         // decode exec
-                        match PATTERNS.iter().find(|p| p.match_inst(&inst)) {
+                        match self.sorted_patterns.iter().find(|&&p| p.match_inst(&inst)) {
                             None => {
                                 error!(
                                     "invalid inst: {:#x} at addr {:#x}",
@@ -460,8 +510,7 @@ impl Isa for RISCV64 {
         }
 
         while !self.stopped.load(Relaxed) {
-            self.state
-                .handle_interrupt(self.cpu_interrupt_bits.load(SeqCst));
+            self.state.handle_interrupt();
             if let Some(pc) = &self.state.dyn_pc {
                 // TODO: fix dup code
                 if pc.value() == 0 {
@@ -492,16 +541,27 @@ impl Isa for RISCV64 {
     }
 
     fn isa_print_icache_info(&self) {
-        self.ibuf.print_info();
-    }
+        cfg_if_feat!("log_inst", {
+            println!("inst counter");
+            let mut vec: Vec<(&'static str, u64)> = vec![];
+            let mut total = 0u64;
+            for (k, v) in self.state.inst_counter.iter() {
+                unsafe {
+                    vec.push((k.as_ref().unwrap()._name, *v));
+                    total += *v;
+                    // println!("{}: {}", k.as_ref().unwrap()._name, v);
+                }
+            }
+            println!("{} insts in total", total);
+            vec.sort_by(|a, b| a.1.cmp(&b.1));
+            for (k, v) in vec {
+                println!("{}: {} ({})", k, v, (v as f64) / (total as f64));
+            }
+            self.ibuf.print_info();
 
-    // fn isa_get_prev_inst_info(&mut self, prev_pc: &VAddr) -> Result<InstInfo, ()> {
-    //     let inst = self.state.memory.read(prev_pc, DWORD);
-    //     let (pattern, _) = self.ibuf.get(&prev_pc.into(), inst).unwrap();
-    //     Ok(InstInfo {
-    //         is_branch: pattern._name == "jal" || pattern._name == "jalr"
-    //     })
-    // }
+            self.state.memory.print_tlb_statistics();
+        });
+    }
 
     fn isa_disassemble_inst(&mut self, addr: &VAddr) -> String {
         let inst = self.state.memory.read(addr, DWORD);
@@ -527,18 +587,6 @@ impl Isa for RISCV64 {
     fn isa_get_backtrace(&self) -> String {
         self.state.get_backtrace_string()
     }
-
-    // fn isa_raise_interrupt(no: u64, epc: VAddr) -> VAddr {
-    //     todo!()
-    // }
-    //
-    // fn isa_query_interrupt() -> u64 {
-    //     todo!()
-    // }
-
-    // fn isa_difftest_check_regs(ref_r: RISCV64CpuState, pc: VAddr) -> bool {
-    //     todo!()
-    // }
 
     fn isa_difftest_init(&mut self) -> DifftestInfo {
         self.state.regs[t0] = 0x80000000;
@@ -583,20 +631,3 @@ impl Isa for RISCV64 {
         Ok(())
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use crate::isa::riscv64::reg::RegName::a0;
-//     use crate::isa::riscv64::vaddr::VAddr;
-//     use crate::monitor::sdb::eval::eval;
-//     use crate::utils::tests::fake_emulator;
-//
-//     #[test]
-//     fn sdb_eval_reg_test() {
-//         let mut emulator = fake_emulator();
-//         emulator.cpu.state.regs[a0] = 114;
-//         emulator.cpu.state.pc = VAddr::new(514);
-//         let exp = "$a0 * 1000 + $pc".to_string();
-//         assert_eq!(eval(exp.as_str(), &mut emulator).unwrap(), 114514);
-//     }
-// }

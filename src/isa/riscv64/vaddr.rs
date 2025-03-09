@@ -11,9 +11,11 @@ use crate::isa::riscv64::vaddr::TranslationErr::{AccessFault, PageFault};
 use crate::isa::riscv64::RISCV64Privilege;
 use crate::memory::paddr::PAddr;
 use crate::memory::Memory;
+use crate::utils::cfg_if_feat;
 use bitfield_struct::bitfield;
-use log::{info, trace, warn};
-use std::cell::RefCell;
+use cfg_if::cfg_if;
+use log::{debug, trace, warn};
+use std::cell::UnsafeCell;
 use std::cmp::PartialEq;
 use std::rc::Rc;
 
@@ -83,15 +85,41 @@ struct SV39 {
 pub struct TranslationCtrl {
     pub is_bare: bool,
     sv39: SV39,
-    privilege: Rc<RefCell<RISCV64Privilege>>,
+    privilege: Rc<UnsafeCell<RISCV64Privilege>>,
     SUM: bool,
     MXR: bool,
     translate_in_m: bool,
 }
 
+#[derive(Clone, Copy)]
+struct TLBEntry {
+    vpn: u64,
+    pte_addrs: [u64; 3],
+    pte_addrs_len: usize,
+    pte: u64,
+}
+
+impl TLBEntry {
+    fn new() -> Self {
+        Self {
+            vpn: 0,
+            pte_addrs: [0; 3],
+            pte_addrs_len: 0,
+            pte: 0,
+        }
+    }
+
+    fn lookup(&self, vaddr: u64) -> bool {
+        vaddr >> 12 == self.vpn && self.pte & 1 != 0
+    }
+}
+
 pub(crate) struct MMU {
     mem: Memory,
     translation_ctrl: TranslationCtrl,
+    tlb: [TLBEntry; 2048],
+    pub miss: u64,
+    pub hit: u64,
 }
 
 #[bitfield(u64)]
@@ -141,7 +169,7 @@ pub enum TranslationErr {
     PageFault,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Copy, Clone)]
 pub enum MemoryAccessType {
     R,
     W,
@@ -149,10 +177,13 @@ pub enum MemoryAccessType {
 }
 
 impl MMU {
-    pub fn new(mem: Memory, privilege: Rc<RefCell<RISCV64Privilege>>) -> Self {
+    pub fn new(mem: Memory, privilege: Rc<UnsafeCell<RISCV64Privilege>>) -> Self {
         Self {
             mem,
             translation_ctrl: TranslationCtrl::new(privilege),
+            tlb: [TLBEntry::new(); 2048],
+            miss: 0,
+            hit: 0,
         }
     }
 
@@ -162,7 +193,10 @@ impl MMU {
     }
 
     fn pt_walk_debug(&self, vaddr: u64) {
-        info!("pt_walk_debug begin, vaddr {:#x}", vaddr);
+        if log::max_level() < log::LevelFilter::Debug {
+            return;
+        }
+        debug!("pt_walk_debug begin, vaddr {:#x}", vaddr);
         let vpn = [
             (vaddr >> 12) & 0b111111111,
             (vaddr >> 21) & 0b111111111,
@@ -172,7 +206,7 @@ impl MMU {
         let mut i = 2;
         for _ in 0..3 {
             let lvl = i;
-            info!(
+            debug!(
                 "try get pte {} at {:#x} ({:#x}+{:#x})",
                 i,
                 a + vpn[lvl] * 8,
@@ -184,7 +218,7 @@ impl MMU {
                     .read_mem(&PAddr::new(a + vpn[lvl] * 8), MemOperationSize::DWORD)
                     .unwrap(),
             );
-            info!("pte {} {:#x}", i, pte.0);
+            debug!("pte {} {:#x}", i, pte.0);
             if pte.0 == 0x0 {
                 return;
             }
@@ -199,21 +233,11 @@ impl MMU {
         }
     }
 
-    pub fn translate(
-        &mut self,
-        vaddr: &VAddr,
-        typ: MemoryAccessType,
-    ) -> Result<PAddr, TranslationErr> {
-        if self.translation_ctrl.is_bare
-            || (*self.translation_ctrl.privilege.borrow() == RISCV64Privilege::M
-                && !(typ != MemoryAccessType::X && self.translation_ctrl.translate_in_m))
-        {
-            return Ok(PAddr::new(vaddr.value()));
-        }
-        trace!("translate vaddr {:#x}", vaddr.value());
+    pub fn sfence_vma(&mut self) {
+        self.tlb.fill(TLBEntry::new());
+    }
 
-        let vaddr = vaddr.value();
-        let ofs = vaddr & 0b111111111111;
+    fn pt_walk(&mut self, vaddr: u64) -> Result<(), TranslationErr> {
         let vpn = [
             (vaddr >> 12) & 0b111111111,
             (vaddr >> 21) & 0b111111111,
@@ -239,6 +263,7 @@ impl MMU {
                 // return Err(PageFault);
             }
             if pte.is_invalid() {
+                debug!("PageFault at vaddr {:#x}, caused by pte invalid", vaddr);
                 return Err(PageFault);
             }
             pte_addrs[lvl] = a + vpn[lvl] * 8;
@@ -250,45 +275,113 @@ impl MMU {
             i -= 1;
         }
         if res_pte.is_none() {
-            warn!("res_pte is none");
+            debug!("PageFault at vaddr {:#x}, caused by res_pte is none", vaddr);
             return Err(PageFault);
         }
         let res_pte = res_pte.unwrap();
         // info!("res pte {} {:#x}", i, res_pte.0);
         if i > 0 && (res_pte.PPN() & ((1 << (9 * i)) - 1)) != 0 {
             warn!("misaligned super page, ppn {:#x}", res_pte.PPN());
+            debug!(
+                "PageFault at vaddr {:#x}, caused by misaligned super page",
+                vaddr
+            );
             return Err(PageFault); // misaligned super page
         }
 
-        let privilege = *self.translation_ctrl.privilege.borrow();
-        if privilege == RISCV64Privilege::U && !res_pte.U() {
+        let tlb_entry = TLBEntry {
+            vpn: vaddr >> 12,
+            pte_addrs,
+            pte_addrs_len: i,
+            pte: res_pte.0,
+        };
+
+        self.tlb[((vaddr >> 12) % 2048) as usize] = tlb_entry;
+
+        Ok(())
+    }
+
+    pub fn translate(
+        &mut self,
+        vaddr: &VAddr,
+        typ: MemoryAccessType,
+    ) -> Result<PAddr, TranslationErr> {
+        if self.translation_ctrl.is_bare
+            || (self.translation_ctrl.current_priv() == RISCV64Privilege::M
+                && !(typ != MemoryAccessType::X && self.translation_ctrl.translate_in_m))
+        {
+            return Ok(PAddr::new(vaddr.value()));
+        }
+        trace!("translate vaddr {:#x}", vaddr.value());
+
+        let vaddr = vaddr.value();
+        let ofs = vaddr & 0b111111111111;
+
+        let tlb_entry = &self.tlb[((vaddr >> 12) % 2048) as usize];
+        if !tlb_entry.lookup(vaddr) {
+            self.pt_walk(vaddr)?;
+            cfg_if_feat!("log_inst", {
+                self.miss += 1;
+            });
+        } else {
+            cfg_if_feat!("log_inst", {
+                self.hit += 1;
+            });
+        }
+        let tlb_entry = &mut self.tlb[((vaddr >> 12) % 2048) as usize];
+
+        let mut pte = SV39PTE::from_bits(tlb_entry.pte);
+
+        let privilege = self.translation_ctrl.current_priv();
+        if privilege == RISCV64Privilege::U && !pte.U() {
+            debug!("PageFault at vaddr {:#x}, caused by U & pte !U", vaddr);
             return Err(PageFault);
         }
-        if res_pte.U() && privilege != RISCV64Privilege::U && !self.translation_ctrl.SUM {
+        if pte.U() && privilege != RISCV64Privilege::U && !self.translation_ctrl.SUM {
+            debug!(
+                "PageFault at vaddr {:#x}, caused by !SUM & !U & pte U",
+                vaddr
+            );
             return Err(PageFault);
         }
-        if !res_pte.check_access_type(typ, self.translation_ctrl.MXR) {
+        if !pte.check_access_type(typ, self.translation_ctrl.MXR) {
             warn!("check_access_type failed");
             return Err(PageFault);
         }
 
-        // update pte.d
-        for j in i..3 {
-            self.mem
-                .pmem_bitor(
-                    &PAddr::new(pte_addrs[j]),
-                    0b10000000,
-                    MemOperationSize::DWORD,
-                )
-                .unwrap();
+        if !pte.D() && typ == MemoryAccessType::W {
+            // update pte.d
+            for j in tlb_entry.pte_addrs_len..3 {
+                self.mem
+                    .pmem_bitor(
+                        &PAddr::new(tlb_entry.pte_addrs[j]),
+                        0b10000000,
+                        MemOperationSize::DWORD,
+                    )
+                    .unwrap();
+            }
+            pte.set_D(true);
+            tlb_entry.pte = pte.into_bits();
+        }
+        if !pte.A() {
+            for j in tlb_entry.pte_addrs_len..3 {
+                self.mem
+                    .pmem_bitor(
+                        &PAddr::new(tlb_entry.pte_addrs[j]),
+                        0b1000000,
+                        MemOperationSize::DWORD,
+                    )
+                    .unwrap();
+            }
+            pte.set_A(true);
+            tlb_entry.pte = pte.into_bits();
         }
 
-        // TODO: pte.a
-        let paddr = if i > 0 {
-            let ofs_len = 9 * i + 12;
-            (res_pte.PPN() << 12) | vaddr & ((1 << ofs_len) - 1)
+        let paddr = if tlb_entry.pte_addrs_len > 0 {
+            let ofs_len = 9 * tlb_entry.pte_addrs_len + 12;
+            (pte.PPN() << 12) | vaddr & ((1 << ofs_len) - 1)
         } else {
-            (res_pte.PPN() << 12) | ofs
+            (pte.PPN() << 12) | ofs
         };
         // info!("PTE PPN is {:#x}, i is {}", res_pte.PPN(), i);
         // info!("translate {:#x} to {:#x}", vaddr, paddr);
@@ -362,10 +455,22 @@ impl MMU {
         self.translation_ctrl.MXR = mstatus.MXR();
         self.translation_ctrl.translate_in_m = mstatus.MPRV() && !mstatus.MPP_is_m_mode();
     }
+
+    #[allow(dead_code)]
+    pub fn print_tlb_statistics(&self) {
+        let total = (self.miss + self.hit) as f64;
+        println!(
+            "MMU: miss {} ({}), hit {} ({})",
+            self.miss,
+            self.miss as f64 / total,
+            self.hit,
+            self.hit as f64 / total
+        );
+    }
 }
 
 impl TranslationCtrl {
-    pub fn new(privilege: Rc<RefCell<RISCV64Privilege>>) -> Self {
+    pub fn new(privilege: Rc<UnsafeCell<RISCV64Privilege>>) -> Self {
         Self {
             is_bare: true,
             sv39: SV39::new(),
@@ -374,6 +479,10 @@ impl TranslationCtrl {
             MXR: false,
             translate_in_m: false,
         }
+    }
+
+    fn current_priv(&self) -> RISCV64Privilege {
+        unsafe { *self.privilege.get() }
     }
 }
 
