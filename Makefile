@@ -49,7 +49,7 @@ build_linux: nemu-rust.dtb
 	$(MAKE) -C opensbi-1.6 CROSS_COMPILE=riscv64-unknown-linux-gnu- PLATFORM=generic PLATFORM_RISCV_ISA=rv64ima_zicsr_zifencei FW_TEXT_START=0x80000000 FW_PAYLOAD_PATH=$(CURDIR)/linux/linux/arch/riscv/boot/Image FW_FDT_PATH=$(CURDIR)/nemu-rust.dtb FW_PAYLOAD_FDT_ADDR=0x9ff00000 -j14	
 
 linux:
-	cargo run --release --package nemu-rust --bin nemu-rust -- --log-level=$(LOG) --term-timeout=0 --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_payload.bin 
+	cargo run --release --package nemu-rust --bin nemu-rust -- --batch --log-level=$(LOG) --term-timeout=114514 --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_payload.bin 
 
 sustechos:
 	cargo run --release --package nemu-rust --bin nemu-rust -- --log-level=$(LOG) --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./SUSTechOS/build/kernel.bin

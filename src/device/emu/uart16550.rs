@@ -112,6 +112,7 @@ impl UART16550 {
                         notify.notified().await;
                         let n = out_cons.pop_slice(&mut buf);
                         writer.write_all(&buf[..n]).await.unwrap();
+                        writer.flush().await.unwrap();
                     }
                 });
 
@@ -131,7 +132,12 @@ impl UART16550 {
                     "--",
                     "bash",
                     "-c",
-                    format!("stty -echo -icanon && nc {} 127.0.0.1 14514", timeout_str).as_str(),
+                    // format!("stty -echo -icanon && nc {} 127.0.0.1 14514", timeout_str).as_str(),
+                    format!(
+                        "stty -echo -icanon && stdbuf -i0 -o0 -e0 nc {} 127.0.0.1 14514",
+                        timeout_str
+                    )
+                    .as_str(),
                 ])
                 .spawn()
                 .unwrap()
@@ -150,6 +156,16 @@ impl UART16550 {
             isr,
             mem: [0; 16],
             plic,
+        }
+    }
+
+    fn clear_interrupt(&self) {
+        if self.ier.load(SeqCst) & 2 == 0 {
+            self.isr.store(0b1, SeqCst);
+            self.plic.lock().unwrap().clear_interrupt(10);
+        } else {
+            self.isr.store(0b10, SeqCst);
+            self.plic.lock().unwrap().trigger_interrupt(10);
         }
     }
 }
@@ -171,8 +187,7 @@ impl IOMap for UART16550 {
                     !rb.is_empty()
                 );
                 if self.ier.load(SeqCst) & 1 == 1 && rb.is_empty() {
-                    self.isr.store(0b1, SeqCst);
-                    self.plic.lock().unwrap().clear_interrupt(10);
+                    self.clear_interrupt();
                 }
                 res
             }

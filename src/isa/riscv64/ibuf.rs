@@ -109,6 +109,7 @@ impl SetAssociativeIBuf {
         unsafe { self.entries.get_unchecked_mut(idx) }.set(pc, inst, pat, decode)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn print_info(&self) {
         let stat = self.stat.borrow();
         let total = (stat.hit + stat.missed) as f64;

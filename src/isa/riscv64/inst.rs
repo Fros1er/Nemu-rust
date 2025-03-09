@@ -6,6 +6,8 @@ use crate::isa::riscv64::reg::{Reg, RegName};
 use crate::isa::riscv64::vaddr::MemOperationSize::{Byte, DWORD, QWORD, WORD};
 use crate::isa::riscv64::vaddr::{MemOperationSize, VAddr};
 use crate::isa::riscv64::{RISCV64CpuState, RISCV64Privilege};
+use crate::utils::cfg_if_feat;
+use cfg_if::cfg_if;
 use lazy_static::lazy_static;
 use log::debug;
 use num::traits::WrappingAdd;
@@ -106,6 +108,12 @@ impl Pattern {
     }
 
     pub fn exec(&self, decode: &Decode, state: &mut RISCV64CpuState) {
+        cfg_if_feat!("log_inst", {
+            *state
+                .inst_counter
+                .get_mut(&(self as *const Pattern))
+                .unwrap() += 1;
+        });
         (self.op)(decode, state);
     }
 }
@@ -372,7 +380,7 @@ macro_rules! gen_arithmetic_w {
 macro_rules! gen_zicsr {
     ($op: tt) => {
         |inst, state| {
-            if !CSRs::check_privilege(inst.imm, *state.privilege.borrow()) {
+            if !CSRs::check_privilege(inst.imm, state.current_priv()) {
                 state.trap(MCauseCode::IllegalInst, Some(inst.inst));
                 return;
             }
@@ -394,7 +402,7 @@ macro_rules! gen_zicsr {
 macro_rules! gen_zicsr_i {
     ($op: tt) => {
         |inst, state| {
-            if !CSRs::check_privilege(inst.imm, *state.privilege.borrow()) {
+            if !CSRs::check_privilege(inst.imm, state.current_priv()) {
                 state.trap(MCauseCode::IllegalInst, Some(inst.inst));
                 return;
             }
@@ -692,7 +700,7 @@ make_pattern(
     make_pattern(
         "0000000 00000 00000 000 00000 1110011", I, "ecall",
         |_inst, state| {
-            let privilege = match *state.privilege.borrow() {
+            let privilege = match state.current_priv() {
                 RISCV64Privilege::M => MCauseCode::ECallM,
                 RISCV64Privilege::S => MCauseCode::ECallS,
                 RISCV64Privilege::U => MCauseCode::ECallU
@@ -718,12 +726,15 @@ make_pattern(
     ),
     make_pattern(
         "0001001 ????? ????? 000 00000 1110011", R, "sfence.vma",
-        |_inst, _state| {} // TODO: TLB
+        |_inst, state| {
+            state.memory.sfence_vma();
+        }
     ),
     make_pattern(
         "0001000 00101 00000 000 00000 1110011", R, "wfi",
         |_inst, state| {
             state.wfi = true;
+            state.set_interrupt_cond_dirty();
             debug!("wfi at pc {:#x}", state.pc.value());
         }
     ),

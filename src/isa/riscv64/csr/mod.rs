@@ -11,11 +11,14 @@ use crate::isa::riscv64::csr::CSRAccessLevel::{NotSupported, ROnly};
 use crate::isa::riscv64::reg::Reg;
 use crate::isa::riscv64::{RISCV64CpuState, RISCV64Privilege};
 use log::{trace, warn};
+use nohash_hasher::IntMap;
 use std::cell::UnsafeCell;
-use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::ops::Index;
 use std::rc::Rc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering::SeqCst;
+use std::sync::Arc;
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, EnumString, FromRepr, IntoStaticStr};
 
@@ -44,10 +47,11 @@ impl CSRInfo {
 type WriteHook = fn(&Reg, &mut RISCV64CpuState);
 
 pub struct CSRs {
-    csrs: HashMap<u64, (Reg, CSRInfo)>,
-    write_hooks: HashMap<u64, WriteHook>,
+    csrs: IntMap<u64, (Reg, CSRInfo)>,
+    write_hooks: IntMap<u64, WriteHook>,
     time: Reg, // hack!
     cycles: Rc<UnsafeCell<u64>>,
+    interrupt_bits: Arc<AtomicU64>,
 } // name => (csr, write_mask)
 
 trait CSR: Into<u64> {
@@ -80,10 +84,10 @@ impl CSROpResult {
 }
 
 impl CSRs {
-    pub fn new(cycles: Rc<UnsafeCell<u64>>) -> Self {
+    pub fn new(cycles: Rc<UnsafeCell<u64>>, interrupt_bits: Arc<AtomicU64>) -> Self {
         #[allow(unused_mut)]
-        let mut map: HashMap<u64, (u64, CSRInfo)> = HashMap::new();
-        let mut write_hooks: HashMap<u64, WriteHook> = HashMap::new();
+        let mut map: IntMap<u64, (u64, CSRInfo)> = IntMap::default();
+        let mut write_hooks: IntMap<u64, WriteHook> = IntMap::default();
         macro_rules! insert_csr {
             // illegal inst when write
             ($name: expr, $val:expr, $mask:expr, $ronly:expr) => {
@@ -141,16 +145,36 @@ impl CSRs {
         const SSTATUS_VIEW_MASK: u64 =
             0b1000000000000000000000000000001100000001100011011110011101100010;
         map_s_csr!(CSRName::sstatus, CSRName::mstatus, SSTATUS_VIEW_MASK, RW);
+
+        insert_csr_hook!(CSRName::sstatus, |csr, state| {
+            let mstatus = csr | (state.csrs[CSRName::mstatus] & !SSTATUS_VIEW_MASK);
+            state.csrs.set_fast(CSRName::mstatus, mstatus);
+            state.memory.update_priv(&MStatus::from_bits(mstatus));
+            state.set_interrupt_cond_dirty();
+        });
         insert_csr_hook!(CSRName::mstatus, |csr, state| {
             state
                 .csrs
                 .set_fast(CSRName::sstatus, *csr & SSTATUS_VIEW_MASK);
             let mstatus: MStatus = (*csr).into();
             state.memory.update_priv(&mstatus);
+            state.set_interrupt_cond_dirty();
         });
 
+        const SIE_VIEW_MASK: u64 = 0b10001000100010;
         insert_defined_csr!(mie::MIE);
-        map_s_csr!(CSRName::sie, CSRName::mie, 0b10001000100010, RW);
+        map_s_csr!(CSRName::sie, CSRName::mie, SIE_VIEW_MASK, RW);
+        write_hooks.insert(CSRName::mie as u64, |csr, state| {
+            state.set_interrupt_cond_dirty();
+            state.csrs.set_fast(CSRName::sie, *csr & SIE_VIEW_MASK);
+        });
+        write_hooks.insert(CSRName::sie as u64, |csr, state| {
+            state.set_interrupt_cond_dirty();
+            state.csrs.set_fast(
+                CSRName::mie,
+                csr | (state.csrs[CSRName::mie] & !SIE_VIEW_MASK),
+            );
+        });
 
         insert_defined_csr!(mie::MIP);
         map_s_csr!(CSRName::sip, CSRName::mip, 0b10001000100010, RW);
@@ -166,6 +190,9 @@ impl CSRs {
         insert_rw_csr!(CSRName::mtval, 0);
         insert_rw_csr!(CSRName::stval, 0);
         insert_rw_csr!(CSRName::mideleg, 0);
+        write_hooks.insert(CSRName::mideleg as u64, |_, state| {
+            state.set_interrupt_cond_dirty();
+        });
         insert_csr!(CSRName::medeleg, 0, !0b10000100000000000, RW);
 
         insert_ronly_csr!(CSRName::mvendorid, 0);
@@ -207,6 +234,7 @@ impl CSRs {
             time: 0,
             cycles,
             write_hooks,
+            interrupt_bits,
         }
     }
 
@@ -223,6 +251,9 @@ impl CSRs {
         check_ronly: bool,
     ) -> Result<(&mut Reg, &u64, Option<&WriteHook>), ()> {
         self.check_idx(idx);
+        const MIP_IDX: u64 = CSRName::mip as u64;
+        const SIP_IDX: u64 = CSRName::sip as u64;
+
         let (csr, info) = self.csrs.get_mut(&(idx)).ok_or(())?;
         match info.access_level {
             CSRAccessLevel::TODO => {
@@ -244,6 +275,7 @@ impl CSRs {
         const TIME_CSR_IDX: u64 = CSRName::time as u64;
         const MCYCLE_CSR_IDX: u64 = CSRName::mcycle as u64;
         const CYCLE_CSR_IDX: u64 = CSRName::cycle as u64;
+
         match idx {
             TIME_CSR_IDX => {
                 self.time = glob_timer.lock().unwrap().since_boot_us();
@@ -252,6 +284,12 @@ impl CSRs {
             MCYCLE_CSR_IDX | CYCLE_CSR_IDX => unsafe {
                 Ok((&mut *self.cycles.get(), &info.write_mask, hook))
             },
+
+            MIP_IDX | SIP_IDX => {
+                let int = self.interrupt_bits.load(SeqCst);
+                *csr = info.write_mask & int;
+                Ok((csr, &info.write_mask, hook))
+            }
 
             _ => Ok((csr, &info.write_mask, hook)),
         }
@@ -265,10 +303,6 @@ impl CSRs {
             val
         );
         self.csrs.get_mut(&(idx as u64)).unwrap().0 = val;
-    }
-
-    pub fn set_zero_fast(&mut self, idx: CSRName) {
-        self.csrs.get_mut(&(idx as u64)).unwrap().0 = 0;
     }
 
     pub fn set_n(&mut self, idx: CSRName, val: u64) -> Result<CSROpResult, ()> {
