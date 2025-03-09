@@ -1,3 +1,4 @@
+abstract-machine/
 riscv_tests/
 uCore-VisionFive2/
 opensbi-1.6/

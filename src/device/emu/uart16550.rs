@@ -134,7 +134,7 @@ impl UART16550 {
                     "-c",
                     // format!("stty -echo -icanon && nc {} 127.0.0.1 14514", timeout_str).as_str(),
                     format!(
-                        "stty -echo -icanon && stdbuf -i0 -o0 -e0 nc {} 127.0.0.1 14514",
+                        "stty raw -echo -icanon && stdbuf -i0 -o0 -e0 nc {} 127.0.0.1 14514",
                         timeout_str
                     )
                     .as_str(),

@@ -44,6 +44,7 @@ opensbi:
 	cargo run --release --package nemu-rust --bin nemu-rust -- --ignore-isa-breakpoint --firmware opensbi-1.6/build/platform/generic/firmware/fw_jump.bin ./tests/rvtest.bin
 
 build_linux: nemu-rust.dtb
+	cd linux/rootfs && find . | cpio -o -H newc | gzip > ../initramfs.cpio.gz
 	$(MAKE) -C linux/linux ARCH=riscv CROSS_COMPILE=riscv64-unknown-linux-gnu- -j14
 	$(MAKE) -C opensbi-1.6 clean
 	$(MAKE) -C opensbi-1.6 CROSS_COMPILE=riscv64-unknown-linux-gnu- PLATFORM=generic PLATFORM_RISCV_ISA=rv64ima_zicsr_zifencei FW_TEXT_START=0x80000000 FW_PAYLOAD_PATH=$(CURDIR)/linux/linux/arch/riscv/boot/Image FW_FDT_PATH=$(CURDIR)/nemu-rust.dtb FW_PAYLOAD_FDT_ADDR=0x9ff00000 -j14	
